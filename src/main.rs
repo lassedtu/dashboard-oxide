@@ -7,7 +7,31 @@ mod ui;
 use app::App;
 use config::Config;
 
+const HELP: &str = "\
+dbx - dashboard-oxide
+
+Usage: dbx [--help | --version]
+
+Run without arguments to open the dashboard.
+Config: ~/.dbx/config.toml";
+
 fn main() -> anyhow::Result<()> {
+    match std::env::args().nth(1).as_deref() {
+        None => {}
+        Some("-V" | "--version") => {
+            println!("dbx {}", env!("CARGO_PKG_VERSION"));
+            return Ok(());
+        }
+        Some("-h" | "--help") => {
+            println!("{HELP}");
+            return Ok(());
+        }
+        Some(other) => {
+            eprintln!("dbx: unknown argument `{other}`\n\n{HELP}");
+            std::process::exit(2);
+        }
+    }
+
     // Load config before touching the terminal so errors print normally.
     let config = Config::load()?;
 
