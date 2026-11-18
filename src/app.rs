@@ -2,18 +2,19 @@ use anyhow::Result;
 use ratatui::DefaultTerminal;
 use ratatui::crossterm::event::{self, Event, KeyCode, KeyEventKind};
 
+use crate::actions::{self, Action, Ctx, Step};
 use crate::config::Config;
 
-/// A menu entry. Static for now; replaced by the Action registry in step 3.
-pub struct MenuItem {
-    pub key: char,
-    pub title: &'static str,
+pub struct Status {
+    pub text: String,
+    pub is_error: bool,
 }
 
 pub struct App {
     pub config: Config,
-    pub menu: Vec<MenuItem>,
+    pub actions: Vec<Box<dyn Action>>,
     pub selected: usize,
+    pub status: Option<Status>,
     should_quit: bool,
 }
 
@@ -21,12 +22,9 @@ impl App {
     pub fn new(config: Config) -> Self {
         Self {
             config,
-            menu: vec![
-                MenuItem { key: 'n', title: "New project" },
-                MenuItem { key: 'r', title: "Recent projects" },
-                MenuItem { key: 'q', title: "Quit" },
-            ],
+            actions: actions::registry(),
             selected: 0,
+            status: None,
             should_quit: false,
         }
     }
@@ -45,17 +43,19 @@ impl App {
         if key.kind != KeyEventKind::Press {
             return;
         }
+        self.status = None;
+
         match key.code {
             KeyCode::Esc => self.should_quit = true,
             KeyCode::Up | KeyCode::Char('k') => {
                 self.selected = self.selected.saturating_sub(1);
             }
             KeyCode::Down | KeyCode::Char('j') => {
-                self.selected = (self.selected + 1).min(self.menu.len() - 1);
+                self.selected = (self.selected + 1).min(self.actions.len() - 1);
             }
             KeyCode::Enter => self.activate(self.selected),
             KeyCode::Char(c) => {
-                if let Some(i) = self.menu.iter().position(|m| m.key == c) {
+                if let Some(i) = self.actions.iter().position(|a| a.key() == c) {
                     self.activate(i);
                 }
             }
@@ -65,9 +65,19 @@ impl App {
 
     fn activate(&mut self, index: usize) {
         self.selected = index;
-        if self.menu[index].key == 'q' {
-            self.should_quit = true;
+        let ctx = Ctx { config: &self.config };
+        let result = self.actions[index].run(&ctx);
+        self.apply(result);
+    }
+
+    /// Carry out whatever an action asked for.
+    fn apply(&mut self, result: Result<Step>) {
+        match result {
+            Ok(Step::Done(text)) => self.status = Some(Status { text, is_error: false }),
+            Ok(Step::Quit) => self.should_quit = true,
+            Err(err) => {
+                self.status = Some(Status { text: format!("{err:#}"), is_error: true });
+            }
         }
-        // Other entries do nothing yet.
     }
 }
