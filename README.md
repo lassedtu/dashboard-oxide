@@ -13,7 +13,7 @@ Built with Rust and [ratatui](https://ratatui.rs). Designed so new actions are a
 Requires a Rust toolchain ([rustup.rs](https://rustup.rs)).
 
 ```sh
-git clone <this repo> && cd dbx
+git clone https://github.com/lassedtu/dashboard-oxide && cd dbx
 ./install.sh
 ```
 
