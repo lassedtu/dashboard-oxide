@@ -231,10 +231,10 @@ impl App {
         match result {
             Ok(Step::Done(text)) => {
                 self.show_menu();
-                self.status = Some(Status { text, is_error: false });
+                self.status = Some(Status { text: capitalize(&text), is_error: false });
             }
             Ok(Step::Quit(message)) => {
-                self.exit_message = message;
+                self.exit_message = message.as_deref().map(capitalize);
                 self.should_quit = true;
             }
             Ok(Step::Prompt(prompt)) => {
@@ -257,6 +257,16 @@ impl App {
                 self.status = Some(Status { text: format!("{err:#}"), is_error: true });
             }
         }
+    }
+}
+
+/// Messages are written lowercase in code ("opened foo") and shown as a
+/// sentence ("Opened foo").
+fn capitalize(text: &str) -> String {
+    let mut chars = text.chars();
+    match chars.next() {
+        Some(first) => first.to_uppercase().chain(chars).collect(),
+        None => String::new(),
     }
 }
 
@@ -324,7 +334,7 @@ mod tests {
         app.apply(Ok(pick.into()));
         press(&mut app, KeyCode::Char('j')); // movement keys still move
         press(&mut app, KeyCode::Char('x'));
-        assert!(app.status.as_ref().is_some_and(|s| s.text == "chose 0"));
+        assert!(app.status.as_ref().is_some_and(|s| s.text == "Chose 0"));
     }
 
     #[test]
@@ -337,7 +347,7 @@ mod tests {
         assert!(app.should_quit);
         assert!(app.exit_command.is_some());
         assert!(app.foreground.is_none());
-        assert_eq!(app.exit_message.as_deref(), Some("opened foo"));
+        assert_eq!(app.exit_message.as_deref(), Some("Opened foo"));
     }
 
     #[test]
@@ -378,7 +388,7 @@ mod tests {
         press(&mut app, KeyCode::Char('k'));
         press(&mut app, KeyCode::Enter);
         assert!(matches!(app.screen, Screen::Menu));
-        assert!(app.status.as_ref().is_some_and(|s| s.text == "accepted"));
+        assert!(app.status.as_ref().is_some_and(|s| s.text == "Accepted"));
     }
 
     #[test]

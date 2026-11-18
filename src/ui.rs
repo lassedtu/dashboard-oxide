@@ -82,12 +82,14 @@ pub fn draw(frame: &mut Frame, app: &App) {
 }
 
 fn draw_status(frame: &mut Frame, status: &Status, area: Rect) {
-    let (icon, color) = if status.is_error {
-        ("✗", Color::Red)
+    // No ✓/✗ icons: some terminals and fonts draw them two cells wide,
+    // covering the first letter of the message. Color carries the meaning.
+    let (text, color) = if status.is_error {
+        (format!("Error: {}", status.text), Color::Red)
     } else {
-        ("✓", Color::Green)
+        (status.text.clone(), Color::Green)
     };
-    let paragraph = Paragraph::new(format!("{icon} {}", status.text))
+    let paragraph = Paragraph::new(text)
         .fg(color)
         .centered()
         .wrap(Wrap { trim: true });

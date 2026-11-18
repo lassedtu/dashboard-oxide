@@ -49,7 +49,7 @@ fn main() -> anyhow::Result<()> {
         sys::run_foreground(&mut command)?;
     }
     if let Some(message) = app.exit_message {
-        println!("✓ {message}");
+        println!("{message}");
     }
     Ok(())
 }
