@@ -94,25 +94,35 @@ fn menu(config: &Config, selected: usize) -> Step {
 /// on or off; `s` (or →) opens its settings. `menu_row` is where Esc returns to.
 fn extensions_list(config: &Config, menu_row: usize, selected: usize) -> Step {
     let all = extensions::all(config);
-    let items = all
+    let broken = extensions::broken(config);
+    let mut items: Vec<String> = all
         .iter()
         .map(|e| {
             let state = if e.is_enabled(config) { "[on] " } else { "[off]" };
             format!("{state} {:<17}{}", fit_end(&e.name, 16), fit_end(&e.description, VALUE_WIDTH))
         })
         .collect();
+    // Installed extensions that failed to load: selecting one shows why.
+    items.extend(broken.iter().map(|b| {
+        format!("[!]   {:<17}{}", fit_end(&b.id, 16), fit_end(&b.error, VALUE_WIDTH))
+    }));
+    let errors: Vec<String> = broken.into_iter().map(|b| format!("{}: {}", b.id, b.error)).collect();
     let ids: Vec<String> = all.into_iter().map(|e| e.id).collect();
-    let settings_ids = ids.clone();
+    let (settings_ids, settings_errors) = (ids.clone(), errors.clone());
 
     Pick::new("Extensions", items, move |i, ctx| {
-        let ext = find(ctx.config, &ids[i])?;
+        let Some(id) = ids.get(i) else { bail!("{}", errors[i - ids.len()]) };
+        let ext = find(ctx.config, id)?;
         let enabled = !ext.is_enabled(ctx.config);
         let updated = save(ctx, &ext.key_for("enabled"), enabled)?;
         Ok(extensions_list(&updated, menu_row, i))
     })
     .enter_label("on/off")
     .alt('s', "settings", move |i, ctx| {
-        Ok(extension_page(ctx.config, &settings_ids[i], menu_row, i, 0))
+        let Some(id) = settings_ids.get(i) else {
+            bail!("{}", settings_errors[i - settings_ids.len()])
+        };
+        Ok(extension_page(ctx.config, id, menu_row, i, 0))
     })
     .selected(selected)
     .back(move |ctx| Ok(menu(ctx.config, menu_row)))
@@ -128,10 +138,19 @@ fn extension_page(config: &Config, id: &str, menu_row: usize, list_row: usize, s
         .chain(ext.settings.iter().cloned())
         .map(|setting| Entry { key: ext.key_for(&setting.key), setting })
         .collect();
-    let items = entries.iter().map(|e| e.row(config)).collect();
+    let mut items: Vec<String> = entries.iter().map(|e| e.row(config)).collect();
+    if let Some(dir) = &ext.dir {
+        items.push(format!("Open {} in editor", fit(&config::tilde(dir), 34)));
+    }
 
     let id = id.to_string();
+    let dir = ext.dir.clone();
     Pick::new(ext.name, items, move |i, ctx| {
+        if i == entries.len()
+            && let Some(dir) = &dir
+        {
+            return open_in_editor(ctx, dir, Step::Done(format!("opened {}", config::tilde(dir))));
+        }
         let id = id.clone();
         let reopen = Rc::new(move |c: &Config| extension_page(c, &id, menu_row, list_row, i));
         edit(entries[i].clone(), ctx, reopen)
@@ -339,6 +358,17 @@ mod tests {
         let page = pick((alt.on_select)(1, &Ctx { config: &config }).unwrap());
         assert_eq!(page.title, "Reports");
 
+        fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn extensions_list_shows_broken_extensions_with_their_error() {
+        let (dir, config) = temp_config("menu-broken");
+        crate::extensions::external::tests::install(&config, "oops", "name = 1\n", "");
+        let list = pick(extensions_list(&config, 2, 0));
+        assert!(list.items[2].starts_with("[!]   oops"), "{:?}", list.items);
+        let err = select(extensions_list(&config, 2, 0), 2, &config).err().expect("an error");
+        assert!(err.to_string().starts_with("oops: "), "{err}");
         fs::remove_dir_all(&dir).unwrap();
     }
 

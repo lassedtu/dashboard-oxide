@@ -34,6 +34,7 @@ pub fn extension() -> Extension {
             Box::new(new_project::NewProject),
             Box::new(recent_projects::RecentProjects),
         ],
+        dir: None,
     }
 }
 

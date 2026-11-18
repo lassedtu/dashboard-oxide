@@ -12,10 +12,11 @@
 //! actions and always present.
 
 pub mod coding_projects;
+pub mod external;
 pub mod folders;
 pub mod reports;
 
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result};
 use serde::de::DeserializeOwned;
@@ -37,6 +38,8 @@ pub struct Extension {
     pub settings: Vec<Setting>,
     /// One action goes straight in the main menu; several become a submenu.
     pub actions: Vec<Box<dyn Action>>,
+    /// Where an external extension is installed; `None` for built-ins.
+    pub dir: Option<PathBuf>,
 }
 
 impl Extension {
@@ -92,7 +95,21 @@ pub fn all(config: &Config) -> Vec<Extension> {
 }
 
 /// Like `all`, for the config file at `config_path` (which may not be loaded yet).
-pub fn all_at(_config_path: &Path) -> Vec<Extension> {
+/// Built-ins first, then installed extensions by id.
+pub fn all_at(config_path: &Path) -> Vec<Extension> {
+    let mut all = builtin();
+    let ids: Vec<String> = all.iter().map(|e| e.id.clone()).collect();
+    all.extend(external::discover(config_path, &ids).0);
+    all
+}
+
+/// Installed extensions that couldn't be loaded, with the reason.
+pub fn broken(config: &Config) -> Vec<external::Broken> {
+    let ids: Vec<String> = builtin().iter().map(|e| e.id.clone()).collect();
+    external::discover(&config.path, &ids).1
+}
+
+fn builtin() -> Vec<Extension> {
     vec![coding_projects::extension(), reports::extension()]
 }
 

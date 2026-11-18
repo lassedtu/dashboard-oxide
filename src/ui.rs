@@ -97,12 +97,17 @@ fn draw_status(frame: &mut Frame, status: &Status, area: Rect) {
 }
 
 fn draw_menu(frame: &mut Frame, app: &App, area: Rect) {
+    // If two entries share a key, the first one gets it (see handle_menu_key),
+    // so only show it there.
+    let mut seen = Vec::new();
     let items: Vec<ListItem> = app
         .actions
         .iter()
         .map(|a| {
+            let key = if seen.contains(&a.key()) { ' ' } else { a.key() };
+            seen.push(a.key());
             ListItem::new(Line::from(vec![
-                Span::from(format!(" {} ", a.key())).bold().cyan(),
+                Span::from(format!(" {key} ")).bold().cyan(),
                 Span::from(a.title()),
             ]))
         })

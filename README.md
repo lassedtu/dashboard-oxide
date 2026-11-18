@@ -10,7 +10,7 @@
   - **Recent reports**: your most recently active reports across all courses.
 - **Config**: view and change every setting from inside dbx, or open `~/.dbx/config.toml` in your editor.
 
-Features come as **extensions** (Coding projects is one), each with its own settings, switched on and off under Config → Extensions.
+Features come as **extensions** (Coding projects is one), each with its own settings, switched on and off under Config → Extensions. You can add your own as a folder with a small TOML file and a script; see [Installing extensions](#installing-extensions).
 
 Built with Rust and [ratatui](https://ratatui.rs). Designed so new features are a single folder.
 
@@ -55,7 +55,7 @@ Press `c` for the Config screen:
 
 ```
 Config                     Editor, Quit after opening, Extensions, Open config.toml
-  └ Extensions             every extension, on or off
+  └ Extensions             every extension: Enter turns it on/off, s (or →) opens its settings
       └ Coding projects    Enabled, Projects folder, Recent projects shown, ...
 ```
 
@@ -67,9 +67,14 @@ Every setting shows its current value. Pressing Enter on one:
 
 Changes are written straight to the file, touching only the line that changed, so your comments are kept. **Open config.toml in editor** opens the file itself.
 
-On first run dbx creates `~/.dbx/config.toml`:
+On first run dbx creates `~/.dbx/config.toml` with every setting and a comment explaining it. It starts like this:
 
 ```toml
+# dbx configuration
+#
+# Every setting can also be changed from the Config screen inside dbx (press c).
+# Settings missing from this file are added back with their defaults.
+
 # Command used to open projects and files. May include arguments, e.g. "code -n".
 # Terminal editors (nvim, vim, hx, ...) take over the terminal while open.
 editor = "code"
@@ -77,32 +82,16 @@ editor = "code"
 # Quit dbx after opening something in the editor.
 close_on_open = true
 
-# Each extension has its own table. Leave a key out to use its default.
-# Everything here can also be changed from Config -> Extensions inside dbx.
-
+# Coding projects: New and recent projects
 [extensions.coding-projects]
 enabled = true
+
 # Folder where new projects are created and recent projects are listed from.
 projects_dir = "~/Developer/Projekter"
-# How many projects to show under "Recent projects".
-recent_count = 10
-# What to set up in new projects.
-git_init = true
-create_readme = true
-
-[extensions.reports]
-enabled = false
-# Author on new reports.
-name = ""
-# One folder per course, named like "02323 Introduction to Statistics".
-root = "~/Documents/DTU"
-# Folder inside each course where reports are created.
-assignments_dir = "Assignments"
-# How many reports to show under "Recent reports".
-recent_count = 10
+...
 ```
 
-Any key you leave out falls back to its default, so old config files keep working as new options are added. Values of the wrong type (say, `recent_count = "ten"`) are reported when dbx starts. Config files from before extensions, with `projects_dir` and `[new_project]` at the top, are moved into `[extensions.coding-projects]` automatically, comments included. dbx re-reads the file every time you start an action, so edits take effect without restarting.
+**The file keeps itself up to date.** Every time dbx loads it, any setting that's missing (because dbx was updated, or you installed an extension) is added with its default and comment. Keys you already have are never changed. Values of the wrong type (say, `recent_count = "ten"`) are reported when dbx starts. Config files from before extensions, with `projects_dir` and `[new_project]` at the top, are moved into `[extensions.coding-projects]` automatically. dbx re-reads the file every time you start an action, so edits take effect without restarting.
 
 **Editors:** GUI editors (VS Code, Zed, ...) are launched in the background. Terminal editors (`nvim`, `vim`, `vi`, `nano`, `hx`, `micro`, `kak`, `emacs -nw`, ...) get the terminal: dbx steps aside while the editor runs and comes back when you quit it. When `close_on_open` is on, dbx exits and the editor opens in its place.
 
@@ -111,6 +100,58 @@ Any key you leave out falls back to its default, so old config files keep workin
 The template in `assets/templates/typst-template/` is built into `dbx`. To use a different one without rebuilding, put it in `~/.dbx/templates/typst-template/`; it needs a `src/report-settings.typ` with `#let title`, `#let subtitle` and `#let author` lines.
 
 **How "recent" is decided:** a folder's own modified time only changes when files directly inside it are added or removed, so dbx also checks `.git/index` and `.git/HEAD`. Staging, committing, and switching branches all count as activity. Hidden folders are skipped.
+
+## Installing extensions
+
+An extension can also be a folder in `~/.dbx/extensions/`, with an `extension.toml` and whatever scripts it runs. No Rust, no rebuilding: dbx picks it up the next time it shows the menu, adds its settings to `config.toml`, and lists it under Config → Extensions. If its `extension.toml` has a mistake, it shows there with `[!]`, and Enter shows the error.
+
+```toml
+# ~/.dbx/extensions/todo/extension.toml   (the folder name, "todo", is the id)
+name = "Todo"
+description = "Append to a todo file"
+
+[[settings]]                # optional, any number; editable under Config → Extensions → Todo
+key = "file"
+label = "Todo file"
+kind = "text"               # text, folder, count, toggle or editor
+default = "~/todo.md"
+help = "File new todos are added to."
+
+[[actions]]                 # one action goes straight in the main menu
+title = "Add todo"
+key = "t"
+run = "./add.sh"            # run with `sh -c` in the extension's folder
+prompt = "Todo"             # optional: ask for a line of text first
+```
+
+`add.sh` gets everything through environment variables:
+
+```sh
+#!/bin/sh
+file="${DBX_SETTING_FILE/#\~/$HOME}"
+[ -n "$DBX_INPUT" ] || { echo "nothing to add" >&2; exit 1; }
+echo "- [ ] $DBX_INPUT" >> "$file"
+echo "added to $file"
+```
+
+| Variable | Value |
+|---|---|
+| `DBX_INPUT` | What the user typed, if the action has a `prompt` |
+| `DBX_SETTING_<KEY>` | Each setting, key upper-cased (`folder` settings have `~` expanded) |
+| `DBX_EDITOR` | The configured editor command |
+| `DBX_CONFIG` | Path to `config.toml` |
+| `DBX_EXTENSION_DIR` | The extension's folder |
+
+The last line the command prints becomes the status message. If it exits with an error, the last line of its stderr is shown in red and you stay where you were (on the prompt, input intact).
+
+More options:
+
+- **Several actions:** add more `[[actions]]` and a top-level `key = "o"`. The extension then gets a submenu, opened with that key.
+- **Interactive programs:** `terminal = true` on an action gives it the terminal (like nvim) until it exits.
+- **Off by default:** `default_enabled = false`.
+- **Keys:** `j` and `k` are for moving; in the main menu `c` and `q` are taken too. If two extensions use the same key, the first one in the menu gets it.
+
+Commands run while dbx waits, so keep them quick, or use `terminal = true` for anything long-running. An extension is just a script you installed: it can do anything your shell can, so only install ones you trust.
 
 ## Project layout
 
@@ -136,6 +177,7 @@ src/
       mod.rs             the extension: settings, actions
       new_project.rs
       recent_projects.rs
+    external.rs          extensions from ~/.dbx/extensions/*/extension.toml
     reports/
       mod.rs             the extension: settings, finding courses
       new_report.rs      course picker → name → create from template
@@ -223,6 +265,7 @@ Esc from the first screen of an action in a submenu returns to that submenu.
                Setting::new("greeting", "Greeting", Kind::Text, "hi"),
            ],
            actions: vec![Box::new(my_action::MyAction)],
+           dir: None,              // only set for extensions installed from a folder
        }
    }
 

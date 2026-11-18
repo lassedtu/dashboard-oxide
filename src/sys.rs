@@ -53,6 +53,26 @@ pub fn spawn_detached(mut command: Command) -> Result<()> {
     Ok(())
 }
 
+/// Run a program with no terminal and wait, returning its stdout. On failure
+/// the error is the last line it printed to stderr (or stdout).
+pub fn run_captured(mut command: Command) -> Result<String> {
+    let program = command.get_program().to_string_lossy().into_owned();
+    let output = command
+        .stdin(Stdio::null())
+        .output()
+        .with_context(|| format!("failed to run `{program}`"))?;
+    let stdout = String::from_utf8_lossy(&output.stdout).into_owned();
+    if output.status.success() {
+        return Ok(stdout);
+    }
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    let last = |text: &str| text.lines().rev().map(str::trim).find(|l| !l.is_empty()).map(String::from);
+    match last(&stderr).or_else(|| last(&stdout)) {
+        Some(line) => bail!("{line}"),
+        None => bail!("`{program}` failed ({})", output.status),
+    }
+}
+
 /// Run a program in the foreground with the terminal attached, and wait.
 /// The caller is responsible for suspending the TUI around this.
 pub fn run_foreground(command: &mut Command) -> Result<()> {

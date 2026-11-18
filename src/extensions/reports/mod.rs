@@ -41,6 +41,7 @@ pub fn extension() -> Extension {
             Box::new(new_report::NewReport),
             Box::new(recent_reports::RecentReports),
         ],
+        dir: None,
     }
 }
 
