@@ -34,7 +34,9 @@ To update, pull and run `./install.sh` again. To remove it:
 ## Usage
 
 ```sh
-dbx            # open the dashboard
+dbx               # open the dashboard
+dbx ext list      # extensions, on/off, and any that failed to load
+dbx ext new <id>  # start a new extension in ~/.dbx/extensions/<id>/
 dbx --version
 dbx --help
 ```
@@ -103,7 +105,7 @@ The template in `assets/templates/typst-template/` is built into `dbx`. To use a
 
 ## Installing extensions
 
-An extension can also be a folder in `~/.dbx/extensions/`, with an `extension.toml` and whatever scripts it runs. No Rust, no rebuilding: dbx picks it up the next time it shows the menu, adds its settings to `config.toml`, and lists it under Config → Extensions. If its `extension.toml` has a mistake, it shows there with `[!]`, and Enter shows the error.
+An extension can also be a folder in `~/.dbx/extensions/`, with an `extension.toml` and whatever scripts it runs. `dbx ext new my-tool` creates a working one to start from, and `examples/extensions/todo` is a complete example (`cp -r examples/extensions/todo ~/.dbx/extensions/`). No Rust, no rebuilding: dbx picks it up the next time it shows the menu, adds its settings to `config.toml`, and lists it under Config → Extensions. If its `extension.toml` has a mistake, it shows there with `[!]`, and Enter shows the error.
 
 ```toml
 # ~/.dbx/extensions/todo/extension.toml   (the folder name, "todo", is the id)
@@ -128,7 +130,7 @@ prompt = "Todo"             # optional: ask for a line of text first
 
 ```sh
 #!/bin/sh
-file="${DBX_SETTING_FILE/#\~/$HOME}"
+file=$(printf '%s' "$DBX_SETTING_FILE" | sed "s|^~|$HOME|")
 [ -n "$DBX_INPUT" ] || { echo "nothing to add" >&2; exit 1; }
 echo "- [ ] $DBX_INPUT" >> "$file"
 echo "added to $file"
@@ -158,10 +160,12 @@ Commands run while dbx waits, so keep them quick, or use `terminal = true` for a
 ```
 assets/logo.ans          ANSI-art logo, compiled into the binary
 assets/templates/        report template, compiled into the binary
+examples/extensions/     a script extension to copy into ~/.dbx/extensions/
 build.rs                 rebuilds when the template changes
 install.sh               installer / uninstaller
 src/
   main.rs                CLI flags, terminal setup and teardown
+  cli.rs                 dbx ext list / new
   app.rs                 app state, screens, key handling
   ui.rs                  all drawing
   config.rs              loading, migrating and editing ~/.dbx/config.toml;

@@ -1,5 +1,6 @@
 mod actions;
 mod app;
+mod cli;
 mod config;
 mod extensions;
 mod sys;
@@ -12,13 +13,17 @@ const HELP: &str = "\
 dbx - dashboard-oxide
 
 Usage: dbx [--help | --version]
+       dbx ext <list | new <id>>
 
 Run without arguments to open the dashboard.
-Config: ~/.dbx/config.toml";
+Config: ~/.dbx/config.toml
+Extensions: ~/.dbx/extensions/";
 
 fn main() -> anyhow::Result<()> {
-    match std::env::args().nth(1).as_deref() {
+    let args: Vec<String> = std::env::args().skip(1).collect();
+    match args.first().map(String::as_str) {
         None => {}
+        Some("ext") => return cli::ext(&args[1..]),
         Some("-V" | "--version") => {
             println!("dbx {}", env!("CARGO_PKG_VERSION"));
             return Ok(());
