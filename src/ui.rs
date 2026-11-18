@@ -29,7 +29,7 @@ pub fn draw(frame: &mut Frame, app: &App) {
     let body_height = match &app.screen {
         Screen::Menu => app.actions.len() as u16 + 2,
         Screen::Prompt { .. } => 3,
-        Screen::Pick { items, .. } => (items.len() as u16).clamp(1, MAX_PICK_ROWS) + 2,
+        Screen::Pick(pick) => (pick.items.len() as u16).clamp(1, MAX_PICK_ROWS) + 2,
     };
 
     let logo = &*LOGO;
@@ -71,13 +71,8 @@ pub fn draw(frame: &mut Frame, app: &App) {
 
     match &app.screen {
         Screen::Menu => draw_menu(frame, app, body),
-        Screen::Prompt { label, input, .. } => draw_prompt(frame, label, input, body),
-        Screen::Pick {
-            title,
-            items,
-            selected,
-            ..
-        } => draw_pick(frame, title, items, *selected, body),
+        Screen::Prompt { prompt, input } => draw_prompt(frame, &prompt.label, input, body),
+        Screen::Pick(pick) => draw_pick(frame, &pick.title, &pick.items, pick.selected, body),
     }
 
     if let Some(status) = &app.status {
@@ -110,7 +105,7 @@ fn draw_menu(frame: &mut Frame, app: &App, area: Rect) {
         })
         .collect();
 
-    let footer = Line::from(format!(" {} ", app.config.projects_dir.display()))
+    let footer = Line::from(format!(" {} ", crate::config::tilde(&app.config.projects_dir)))
         .dark_gray()
         .right_aligned();
 

@@ -43,6 +43,10 @@ fn main() -> anyhow::Result<()> {
     ratatui::restore();
     result?;
 
+    // A terminal editor takes over the shell where dbx was.
+    if let Some(mut command) = app.exit_command {
+        sys::run_foreground(&mut command)?;
+    }
     if let Some(message) = app.exit_message {
         println!("✓ {message}");
     }
