@@ -1,12 +1,13 @@
 [package]
 name = "dbx"
-version = "0.1.0"
+version = "1.1.0"
 edition = "2024"
 
 [dependencies]
 ansi-to-tui = "8.0.1"
 anyhow = "1.0.104"
 dirs = "7.0.0"
+include_dir = "0.7"
 ratatui = "0.30.2"
 serde = { version = "1.0.229", features = ["derive"] }
 toml = "1.2.1"

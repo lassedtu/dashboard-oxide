@@ -1,0 +1,17 @@
+# An example dbx extension. Install it with:
+#   cp -r examples/extensions/todo ~/.dbx/extensions/
+name = "Todo"
+description = "Append to a todo file"
+
+[[settings]]
+key = "file"
+label = "Todo file"
+kind = "text"
+default = "~/todo.md"
+help = "Markdown file new todos are added to."
+
+[[actions]]
+title = "Add todo"
+key = "t"
+run = "./add.sh"
+prompt = "Todo"

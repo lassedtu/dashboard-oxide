@@ -41,8 +41,8 @@ pub struct App {
 impl App {
     pub fn new(config: Config) -> Self {
         Self {
+            actions: actions::registry(&config),
             config,
-            actions: actions::registry(),
             selected: 0,
             screen: Screen::Menu,
             status: None,
@@ -82,6 +82,19 @@ impl App {
                 });
             }
         }
+    }
+
+    /// Return to the main menu, rebuilding it so extensions toggled since
+    /// (in dbx or in the file) appear or disappear. The cursor stays on the
+    /// same action if it's still there.
+    fn show_menu(&mut self) {
+        self.screen = Screen::Menu;
+        self.reload_config();
+        let current = self.actions.get(self.selected).map(|a| a.title().to_string());
+        self.actions = actions::registry(&self.config);
+        self.selected = current
+            .and_then(|title| self.actions.iter().position(|a| a.title() == title))
+            .unwrap_or(0);
     }
 
     fn handle_event(&mut self, event: Event) {
@@ -168,6 +181,24 @@ impl App {
                 let on_back = pick.on_back.take();
                 self.go_back(on_back);
             }
+            KeyCode::Right | KeyCode::Char(_)
+                if !pick.items.is_empty()
+                    && pick.alt.as_ref().is_some_and(|alt| {
+                        key.code == KeyCode::Right || key.code == KeyCode::Char(alt.key)
+                    }) =>
+            {
+                self.reload_config();
+                let Screen::Pick(pick) = &mut self.screen else { return };
+                let Some(alt) = pick.alt.as_mut() else { return };
+                let result = (alt.on_select)(pick.selected, &Ctx { config: &self.config });
+                self.apply(result);
+            }
+            KeyCode::Char(c) => {
+                if let Some(i) = pick.shortcuts.iter().position(|&k| k == c) {
+                    pick.selected = i;
+                    self.handle_pick_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+                }
+            }
             _ => {}
         }
     }
@@ -175,7 +206,7 @@ impl App {
     /// Esc: run the screen's `on_back` if it has one, otherwise return to the menu.
     fn go_back(&mut self, on_back: Option<OnBack>) {
         let Some(mut on_back) = on_back else {
-            self.screen = Screen::Menu;
+            self.show_menu();
             return;
         };
         self.reload_config();
@@ -211,11 +242,11 @@ impl App {
     fn apply(&mut self, result: Result<Step>) {
         match result {
             Ok(Step::Done(text)) => {
-                self.screen = Screen::Menu;
-                self.status = Some(Status { text, is_error: false });
+                self.show_menu();
+                self.status = Some(Status { text: capitalize(&text), is_error: false });
             }
             Ok(Step::Quit(message)) => {
-                self.exit_message = message;
+                self.exit_message = message.as_deref().map(capitalize);
                 self.should_quit = true;
             }
             Ok(Step::Prompt(prompt)) => {
@@ -241,6 +272,16 @@ impl App {
     }
 }
 
+/// Messages are written lowercase in code ("opened foo") and shown as a
+/// sentence ("Opened foo").
+fn capitalize(text: &str) -> String {
+    let mut chars = text.chars();
+    match chars.next() {
+        Some(first) => first.to_uppercase().chain(chars).collect(),
+        None => String::new(),
+    }
+}
+
 /// Leave the TUI, run `command` attached to the terminal, then come back.
 /// The TUI is restored even if the command fails.
 fn suspend_and_run(terminal: &mut DefaultTerminal, command: &mut Command) -> Result<()> {
@@ -255,6 +296,7 @@ fn suspend_and_run(terminal: &mut DefaultTerminal, command: &mut Command) -> Res
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::fs;
 
     #[test]
     fn esc_runs_back_handler_else_returns_to_menu() {
@@ -274,6 +316,40 @@ mod tests {
     }
 
     #[test]
+    fn returning_to_menu_picks_up_toggled_extensions() {
+        let dir = std::env::temp_dir().join(format!("dbx-app-ext-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&dir);
+        let path = dir.join("config.toml");
+        let mut app = App::new(Config::load_from(&path).unwrap());
+        app.selected = 1; // Config
+        assert_eq!(app.actions.len(), 3);
+
+        // Disable an extension while a sub-screen is open, then Esc back.
+        app.apply(Ok(Step::pick("Sub", vec!["x".into()], |_, _| Ok(Step::Quit(None)))));
+        crate::config::set(&path, "extensions.coding-projects.enabled", false).unwrap();
+        press(&mut app, KeyCode::Esc);
+
+        let titles: Vec<_> = app.actions.iter().map(|a| a.title()).collect();
+        assert_eq!(titles, ["Config", "Quit"]);
+        assert_eq!(app.actions[app.selected].title(), "Config");
+
+        fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn pick_shortcut_selects_and_activates() {
+        let mut app = App::new(Config::default());
+        let pick = Pick::new("Sub", vec!["a".into(), "b".into()], |i, _| {
+            Ok(Step::Done(format!("chose {i}")))
+        })
+        .shortcuts(vec!['x', 'y']);
+        app.apply(Ok(pick.into()));
+        press(&mut app, KeyCode::Char('j')); // movement keys still move
+        press(&mut app, KeyCode::Char('x'));
+        assert!(app.status.as_ref().is_some_and(|s| s.text == "Chose 0"));
+    }
+
+    #[test]
     fn terminal_command_before_quit_runs_after_exit() {
         let mut app = App::new(Config::default());
         app.apply(Ok(Step::RunInTerminal {
@@ -283,7 +359,7 @@ mod tests {
         assert!(app.should_quit);
         assert!(app.exit_command.is_some());
         assert!(app.foreground.is_none());
-        assert_eq!(app.exit_message.as_deref(), Some("opened foo"));
+        assert_eq!(app.exit_message.as_deref(), Some("Opened foo"));
     }
 
     #[test]
@@ -324,7 +400,7 @@ mod tests {
         press(&mut app, KeyCode::Char('k'));
         press(&mut app, KeyCode::Enter);
         assert!(matches!(app.screen, Screen::Menu));
-        assert!(app.status.as_ref().is_some_and(|s| s.text == "accepted"));
+        assert!(app.status.as_ref().is_some_and(|s| s.text == "Accepted"));
     }
 
     #[test]
