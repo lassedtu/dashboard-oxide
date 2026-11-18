@@ -28,10 +28,14 @@ pub fn extension() -> Extension {
         // Built around one folder layout, so opt-in.
         default_enabled: false,
         settings: vec![
-            Setting::new("name", "Your name", Kind::Text, ""),
-            Setting::new("root", "Courses folder", Kind::Folder, "~/Documents/DTU"),
-            Setting::new("assignments_dir", "Reports subfolder", Kind::Text, "Assignments"),
-            Setting::new("recent_count", "Recent reports shown", Kind::Count, 10),
+            Setting::new("name", "Your name", Kind::Text, "")
+                .help("Author on new reports."),
+            Setting::new("root", "Courses folder", Kind::Folder, "~/Documents/DTU")
+                .help("One folder per course, named like \"02323 Introduction to Statistics\"."),
+            Setting::new("assignments_dir", "Reports subfolder", Kind::Text, "Assignments")
+                .help("Folder inside each course where reports are created."),
+            Setting::new("recent_count", "Recent reports shown", Kind::Count, 10)
+                .help("How many reports to show under \"Recent reports\"."),
         ],
         actions: vec![
             Box::new(new_report::NewReport),

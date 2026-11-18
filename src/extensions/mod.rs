@@ -15,6 +15,8 @@ pub mod coding_projects;
 pub mod folders;
 pub mod reports;
 
+use std::path::Path;
+
 use anyhow::{Context, Result};
 use serde::de::DeserializeOwned;
 
@@ -85,7 +87,12 @@ impl Extension {
 }
 
 /// Every known extension, enabled or not, in menu order.
-pub fn all() -> Vec<Extension> {
+pub fn all(config: &Config) -> Vec<Extension> {
+    all_at(&config.path)
+}
+
+/// Like `all`, for the config file at `config_path` (which may not be loaded yet).
+pub fn all_at(_config_path: &Path) -> Vec<Extension> {
     vec![coding_projects::extension(), reports::extension()]
 }
 
@@ -96,7 +103,7 @@ mod tests {
 
     #[test]
     fn ids_and_keys_are_unique_and_settings_load() {
-        let all = all();
+        let all = all(&Config::default());
         let ids: HashSet<_> = all.iter().map(|e| &e.id).collect();
         assert_eq!(ids.len(), all.len());
         for ext in &all {

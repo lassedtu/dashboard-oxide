@@ -6,41 +6,14 @@ use serde::Deserialize;
 
 use crate::{extensions, sys};
 
-/// Written to ~/.dbx/config.toml on first run. Must stay in sync with
-/// `core_settings()` and the extensions' defaults (enforced by tests).
-const DEFAULT_CONFIG: &str = r#"# dbx configuration
-
-# Command used to open projects and files. May include arguments, e.g. "code -n".
-# Terminal editors (nvim, vim, hx, ...) take over the terminal while open.
-editor = "code"
-
-# Quit dbx after opening something in the editor.
-close_on_open = true
-
-# Each extension has its own table. Leave a key out to use its default.
-# Everything here can also be changed from Config -> Extensions inside dbx.
-
-[extensions.coding-projects]
-enabled = true
-# Folder where new projects are created and recent projects are listed from.
-projects_dir = "~/Developer/Projekter"
-# How many projects to show under "Recent projects".
-recent_count = 10
-# What to set up in new projects.
-git_init = true
-create_readme = true
-
-[extensions.reports]
-enabled = false
-# Author on new reports.
-name = ""
-# One folder per course, named like "02323 Introduction to Statistics".
-root = "~/Documents/DTU"
-# Folder inside each course where reports are created.
-assignments_dir = "Assignments"
-# How many reports to show under "Recent reports".
-recent_count = 10
-"#;
+/// Start of a new config file. Everything else is filled in by `upgrade`,
+/// from the settings' defaults and help texts.
+const HEADER: &str = "\
+# dbx configuration
+#
+# Every setting can also be changed from the Config screen inside dbx (press c).
+# Settings missing from this file are added back with their defaults.
+";
 
 /// The core settings, i.e. everything not owned by an extension.
 #[derive(Debug, Deserialize, PartialEq)]
@@ -70,8 +43,12 @@ impl Default for Config {
 /// Core settings as shown on the Config screen. Defaults must match `Config::default()`.
 pub fn core_settings() -> Vec<Setting> {
     vec![
-        Setting::new("editor", "Editor", Kind::Editor, "code"),
-        Setting::new("close_on_open", "Quit after opening", Kind::Toggle, true),
+        Setting::new("editor", "Editor", Kind::Editor, "code").help(
+            "Command used to open projects and files. May include arguments, e.g. \"code -n\".\n\
+             Terminal editors (nvim, vim, hx, ...) take over the terminal while open.",
+        ),
+        Setting::new("close_on_open", "Quit after opening", Kind::Toggle, true)
+            .help("Quit dbx after opening something in the editor."),
     ]
 }
 
@@ -87,15 +64,22 @@ impl Config {
     }
 
     pub fn load_from(path: &Path) -> Result<Self> {
-        if !path.exists() {
+        let is_new = !path.exists();
+        if is_new {
             if let Some(parent) = path.parent() {
                 fs::create_dir_all(parent)
                     .with_context(|| format!("creating {}", parent.display()))?;
             }
-            fs::write(path, DEFAULT_CONFIG)
-                .with_context(|| format!("writing {}", path.display()))?;
+            fs::write(path, "").with_context(|| format!("writing {}", path.display()))?;
         }
         migrate(path)?;
+        upgrade(path)?;
+        if is_new {
+            // Added last: in an otherwise empty file, a comment would end up below the settings.
+            let text = fs::read_to_string(path)?;
+            fs::write(path, format!("{HEADER}{text}"))
+                .with_context(|| format!("writing {}", path.display()))?;
+        }
 
         let text =
             fs::read_to_string(path).with_context(|| format!("reading {}", path.display()))?;
@@ -105,7 +89,7 @@ impl Config {
         config.path = path.to_path_buf();
 
         // Catch wrong types now rather than when an extension runs.
-        for ext in extensions::all() {
+        for ext in extensions::all(&config) {
             ext.check(&config).with_context(|| format!("in {}", path.display()))?;
         }
         Ok(config)
@@ -123,7 +107,8 @@ impl Config {
 }
 
 /// How a setting is shown, validated and edited.
-#[derive(Clone, Copy, Debug, PartialEq)]
+#[derive(Clone, Copy, Debug, PartialEq, Deserialize)]
+#[serde(rename_all = "lowercase")]
 pub enum Kind {
     /// Any non-empty text.
     Text,
@@ -143,6 +128,8 @@ pub struct Setting {
     pub label: String,
     pub kind: Kind,
     pub default: toml::Value,
+    /// Written as a comment above the key when it's added to the file.
+    pub help: String,
 }
 
 impl Setting {
@@ -152,7 +139,18 @@ impl Setting {
         kind: Kind,
         default: impl Into<toml::Value>,
     ) -> Self {
-        Self { key: key.into(), label: label.into(), kind, default: default.into() }
+        Self {
+            key: key.into(),
+            label: label.into(),
+            kind,
+            default: default.into(),
+            help: String::new(),
+        }
+    }
+
+    pub fn help(mut self, help: impl Into<String>) -> Self {
+        self.help = help.into();
+        self
     }
 
     /// Check a value from the file has the right type.
@@ -277,6 +275,69 @@ fn write_doc(path: &Path, doc: &toml_edit::DocumentMut) -> Result<()> {
     fs::write(path, doc.to_string()).with_context(|| format!("writing {}", path.display()))
 }
 
+/// Add every missing setting to the file with its default and help comment:
+/// core settings, then one `[extensions.<id>]` table per extension. Keys
+/// already there are never touched, so this only ever fills gaps (e.g. after
+/// updating dbx or installing an extension).
+fn upgrade(path: &Path) -> Result<()> {
+    let mut doc = read_doc(path)?;
+    let root = doc.as_table_mut();
+    let mut changed = false;
+
+    for setting in core_settings() {
+        changed |= add_missing(root, &setting)?;
+    }
+
+    let all = extensions::all_at(path);
+    if !all.is_empty() {
+        let tables = root
+            .entry("extensions")
+            .or_insert_with(implicit_table)
+            .as_table_mut()
+            .context("`extensions` is not a table")?;
+        for ext in all {
+            if !tables.contains_key(&ext.id) {
+                let mut table = toml_edit::Table::new();
+                table.decor_mut().set_prefix(format!("\n# {}: {}\n", ext.name, ext.description));
+                tables.insert(&ext.id, toml_edit::Item::Table(table));
+                changed = true;
+            }
+            let table = tables[&ext.id]
+                .as_table_mut()
+                .with_context(|| format!("`extensions.{}` is not a table", ext.id))?;
+            for setting in std::iter::once(ext.enabled_setting()).chain(ext.settings) {
+                changed |= add_missing(table, &setting)?;
+            }
+        }
+    }
+
+    if changed {
+        write_doc(path, &doc)?;
+    }
+    Ok(())
+}
+
+/// Insert `setting` with its default if the table doesn't have it. Returns whether it did.
+fn add_missing(table: &mut toml_edit::Table, setting: &Setting) -> Result<bool> {
+    if table.contains_key(&setting.key) {
+        return Ok(false);
+    }
+    let mut value: toml_edit::Value = setting
+        .default
+        .to_string()
+        .parse()
+        .with_context(|| format!("default for `{}`", setting.key))?;
+    value.decor_mut().clear();
+
+    let mut key = toml_edit::Key::new(&setting.key);
+    if !setting.help.is_empty() {
+        let comment: String = setting.help.lines().map(|l| format!("# {}\n", l.trim())).collect();
+        key.leaf_decor_mut().set_prefix(format!("\n{comment}"));
+    }
+    table.insert_formatted(&key, toml_edit::Item::Value(value));
+    Ok(true)
+}
+
 /// Move settings from older layouts to where they live now. Comments move
 /// with their keys. Runs on every load and does nothing once migrated.
 fn migrate(path: &Path) -> Result<()> {
@@ -285,11 +346,33 @@ fn migrate(path: &Path) -> Result<()> {
 
     // Before extensions, the coding-project settings were top-level.
     let mut moved = Vec::new();
+    // Comments above a moved key that belong to the file, not the key (a
+    // header, say): everything before the last blank line. They stay at the top.
+    let mut stays = String::new();
     for key in ["projects_dir", "recent_count"] {
-        if let Some(entry) = root.remove_entry(key) {
-            moved.push(entry);
+        if let Some((mut key, item)) = root.remove_entry(key) {
+            let prefix = key.leaf_decor().prefix().and_then(|p| p.as_str()).unwrap_or("").to_string();
+            if let Some(split) = prefix.rfind("\n\n") {
+                stays.push_str(&prefix[..split + 1]);
+                key.leaf_decor_mut().set_prefix(&prefix[split + 1..]);
+            }
+            moved.push((key, item));
         }
     }
+    if !stays.is_empty() {
+        let placed = match root.iter_mut().next() {
+            Some((mut first, _)) => {
+                let own = first.leaf_decor().prefix().and_then(|p| p.as_str()).unwrap_or("").to_string();
+                first.leaf_decor_mut().set_prefix(format!("{stays}{own}"));
+                true
+            }
+            None => false,
+        };
+        if !placed {
+            doc.decor_mut().set_prefix(stays);
+        }
+    }
+    let root = doc.as_table_mut();
     if let Some(toml_edit::Item::Table(mut old)) = root.remove("new_project") {
         for key in ["git_init", "create_readme"] {
             if let Some(entry) = old.remove_entry(key) {
@@ -357,23 +440,54 @@ pub mod tests {
     }
 
     #[test]
-    fn template_matches_defaults() {
-        let template: toml::Table = toml::from_str(DEFAULT_CONFIG).unwrap();
-        let parsed: Config = toml::from_str(DEFAULT_CONFIG).unwrap();
-        assert_eq!(parsed, Config::default());
-        for setting in core_settings() {
-            assert_eq!(template.get(&setting.key), Some(&setting.default), "{}", setting.key);
-        }
+    fn new_file_has_every_setting_with_defaults_and_comments() {
+        let (dir, config) = temp_config("new-file");
+        let text = fs::read_to_string(&config.path).unwrap();
+        assert_eq!(config, Config { path: config.path.clone(), raw: config.raw.clone(), ..Config::default() });
 
-        // Every extension table in the template spells out exactly the defaults.
-        let tables = template["extensions"].as_table().unwrap();
-        for ext in extensions::all() {
-            let Some(table) = tables.get(&ext.id).and_then(|t| t.as_table()) else { continue };
-            assert_eq!(table.get("enabled").and_then(|v| v.as_bool()), Some(ext.default_enabled));
+        for setting in core_settings() {
+            assert_eq!(config.get(&setting.key), Some(&setting.default), "{}", setting.key);
+        }
+        for ext in extensions::all(&config) {
+            assert_eq!(ext.is_enabled(&config), ext.default_enabled);
+            assert!(text.contains(&format!("# {}: {}\n[extensions.{}]", ext.name, ext.description, ext.id)));
             for setting in &ext.settings {
-                assert_eq!(table.get(&setting.key), Some(&setting.default), "{}", setting.key);
+                assert_eq!(config.get(&ext.key_for(&setting.key)), Some(&setting.default));
+                if !setting.help.is_empty() {
+                    assert!(text.contains(&format!("# {}\n{} =", setting.help, setting.key)), "{text}");
+                }
             }
         }
+        assert!(text.contains("# Quit dbx after opening something in the editor.\nclose_on_open = true"));
+        assert!(text.starts_with(HEADER), "{text}");
+
+        // Loading again doesn't change anything.
+        config.reload().unwrap();
+        assert_eq!(fs::read_to_string(&config.path).unwrap(), text);
+        fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn upgrade_fills_gaps_and_keeps_existing_values() {
+        let dir = std::env::temp_dir().join(format!("dbx-upgrade-{}", std::process::id()));
+        let path = dir.join("config.toml");
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(&dir).unwrap();
+        let old = "# mine\neditor = \"vim\"\n\n[extensions.coding-projects]\nrecent_count = 3 # keep\n";
+        fs::write(&path, old).unwrap();
+
+        let config = Config::load_from(&path).unwrap();
+        let text = fs::read_to_string(&path).unwrap();
+        assert!(text.starts_with("# mine\neditor = \"vim\"\n"), "{text}");
+        assert!(text.contains("recent_count = 3 # keep"));
+        assert_eq!(config.editor, "vim");
+        assert!(config.close_on_open);
+        assert_eq!(config.get("extensions.coding-projects.enabled"), Some(&true.into()));
+        assert_eq!(config.get("extensions.reports.enabled"), Some(&false.into()));
+        // Core keys added after the existing ones, before any table.
+        assert!(text.find("close_on_open").unwrap() < text.find("[extensions").unwrap(), "{text}");
+
+        fs::remove_dir_all(&dir).unwrap();
     }
 
     #[test]
@@ -411,6 +525,7 @@ pub mod tests {
         let text = fs::read_to_string(path).unwrap();
         assert!(text.contains("# Command used to open projects and files."));
         assert!(text.contains("# How many projects to show"));
+
         assert!(text.contains("[extensions.other]"));
         assert!(!text.contains("[extensions]\n"), "no empty parent header:\n{text}");
 
@@ -433,7 +548,7 @@ pub mod tests {
         fs::create_dir_all(&dir).unwrap();
         fs::write(
             &path,
-            "editor = \"vim\"\n\n# Where projects live.\nprojects_dir = \"/tmp\"\nrecent_count = 3\n\n[new_project]\ngit_init = false\n",
+            "# my config\n\n# Where projects live.\nprojects_dir = \"/tmp\"\neditor = \"vim\"\nrecent_count = 3\n\n[new_project]\ngit_init = false\n",
         )
         .unwrap();
 
@@ -446,6 +561,7 @@ pub mod tests {
 
         let text = fs::read_to_string(&path).unwrap();
         assert!(text.contains("# Where projects live.\nprojects_dir"), "{text}");
+        assert!(text.starts_with("# my config\neditor = \"vim\""), "{text}");
         assert!(!text.contains("[new_project]"));
 
         // Running again changes nothing.

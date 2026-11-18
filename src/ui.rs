@@ -134,7 +134,8 @@ fn draw_prompt(frame: &mut Frame, label: &str, input: &str, area: Rect) {
 }
 
 fn draw_pick(frame: &mut Frame, pick: &Pick, area: Rect) {
-    let hint = Line::from(" enter: select · esc: back ")
+    let alt = pick.alt.as_ref().map(|a| format!(" · {}: {}", a.key, a.label)).unwrap_or_default();
+    let hint = Line::from(format!(" enter: {}{alt} · esc: back ", pick.enter_label))
         .dark_gray()
         .right_aligned();
     let block = Block::bordered()

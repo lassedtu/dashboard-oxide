@@ -12,7 +12,7 @@
 
 use std::rc::Rc;
 
-use anyhow::{Result, bail};
+use anyhow::{Context, Result, bail};
 
 use super::{Action, Ctx, Pick, Prompt, Step, open_in_editor};
 use crate::config::{self, Config, Kind, Setting};
@@ -70,7 +70,7 @@ fn menu(config: &Config, selected: usize) -> Step {
         .map(|setting| Entry { key: setting.key.clone(), setting })
         .collect();
 
-    let all = extensions::all();
+    let all = extensions::all(config);
     let on = all.iter().filter(|e| e.is_enabled(config)).count();
     let mut items: Vec<String> = entries.iter().map(|e| e.row(config)).collect();
     items.push(row("Extensions", &format!("{on} of {} on", all.len())));
@@ -90,20 +90,29 @@ fn menu(config: &Config, selected: usize) -> Step {
     .into()
 }
 
-/// Every extension and whether it's on. `menu_row` is where Esc returns to.
+/// Every extension and whether it's on. Enter switches the highlighted one
+/// on or off; `s` (or →) opens its settings. `menu_row` is where Esc returns to.
 fn extensions_list(config: &Config, menu_row: usize, selected: usize) -> Step {
-    let all = extensions::all();
+    let all = extensions::all(config);
     let items = all
         .iter()
         .map(|e| {
-            let state = if e.is_enabled(config) { "on" } else { "off" };
-            format!("{state:<5}{:<18}{}", e.name, fit(&e.description, VALUE_WIDTH))
+            let state = if e.is_enabled(config) { "[on] " } else { "[off]" };
+            format!("{state} {:<17}{}", fit_end(&e.name, 16), fit_end(&e.description, VALUE_WIDTH))
         })
         .collect();
     let ids: Vec<String> = all.into_iter().map(|e| e.id).collect();
+    let settings_ids = ids.clone();
 
     Pick::new("Extensions", items, move |i, ctx| {
-        Ok(extension_page(ctx.config, &ids[i], menu_row, i, 0))
+        let ext = find(ctx.config, &ids[i])?;
+        let enabled = !ext.is_enabled(ctx.config);
+        let updated = save(ctx, &ext.key_for("enabled"), enabled)?;
+        Ok(extensions_list(&updated, menu_row, i))
+    })
+    .enter_label("on/off")
+    .alt('s', "settings", move |i, ctx| {
+        Ok(extension_page(ctx.config, &settings_ids[i], menu_row, i, 0))
     })
     .selected(selected)
     .back(move |ctx| Ok(menu(ctx.config, menu_row)))
@@ -112,7 +121,7 @@ fn extensions_list(config: &Config, menu_row: usize, selected: usize) -> Step {
 
 /// One extension: its on/off switch followed by its settings.
 fn extension_page(config: &Config, id: &str, menu_row: usize, list_row: usize, selected: usize) -> Step {
-    let Some(ext) = extensions::all().into_iter().find(|e| e.id == id) else {
+    let Ok(ext) = find(config, id) else {
         return extensions_list(config, menu_row, list_row);
     };
     let entries: Vec<Entry> = std::iter::once(ext.enabled_setting())
@@ -130,6 +139,13 @@ fn extension_page(config: &Config, id: &str, menu_row: usize, list_row: usize, s
     .selected(selected)
     .back(move |ctx| Ok(extensions_list(ctx.config, menu_row, list_row)))
     .into()
+}
+
+fn find(config: &Config, id: &str) -> Result<extensions::Extension> {
+    extensions::all(config)
+        .into_iter()
+        .find(|e| e.id == id)
+        .with_context(|| format!("extension `{id}` is no longer installed"))
 }
 
 /// What selecting a setting does: toggles flip in place, editors get a
@@ -220,6 +236,11 @@ fn save(ctx: &Ctx, key: &str, value: impl Into<toml_edit::Value>) -> Result<Conf
     ctx.config.reload()
 }
 
+/// Shorten from the right, for names and descriptions.
+fn fit_end(value: &str, width: usize) -> String {
+    extensions::folders::truncate(value, width)
+}
+
 /// Shorten from the left so the meaningful end of a path stays visible.
 fn fit(value: &str, width: usize) -> String {
     let len = value.chars().count();
@@ -292,6 +313,31 @@ mod tests {
         // Esc goes back to the Extensions list.
         let back = (pick(page(&config, 0)).on_back.unwrap())(&ctx).unwrap();
         assert_eq!(pick(back).title, "Extensions");
+
+        fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn extensions_list_toggles_on_enter_and_opens_settings_on_s() {
+        let (dir, config) = temp_config("menu-list");
+        let list = extensions_list(&config, 2, 0);
+        assert!(pick(list).items[1].starts_with("[off] Reports"));
+
+        // Enter on Reports turns it on and stays on that row.
+        let step = select(extensions_list(&config, 2, 0), 1, &config).unwrap();
+        let after = pick(step);
+        assert_eq!(after.selected, 1);
+        assert!(after.items[1].starts_with("[on]  Reports"));
+        let config = config.reload().unwrap();
+        assert_eq!(config.get("extensions.reports.enabled"), Some(&true.into()));
+
+        // s opens its settings page.
+        let mut list = pick(extensions_list(&config, 2, 0));
+        assert_eq!(list.enter_label, "on/off");
+        let alt = list.alt.as_mut().unwrap();
+        assert_eq!(alt.key, 's');
+        let page = pick((alt.on_select)(1, &Ctx { config: &config }).unwrap());
+        assert_eq!(page.title, "Reports");
 
         fs::remove_dir_all(&dir).unwrap();
     }

@@ -181,6 +181,18 @@ impl App {
                 let on_back = pick.on_back.take();
                 self.go_back(on_back);
             }
+            KeyCode::Right | KeyCode::Char(_)
+                if !pick.items.is_empty()
+                    && pick.alt.as_ref().is_some_and(|alt| {
+                        key.code == KeyCode::Right || key.code == KeyCode::Char(alt.key)
+                    }) =>
+            {
+                self.reload_config();
+                let Screen::Pick(pick) = &mut self.screen else { return };
+                let Some(alt) = pick.alt.as_mut() else { return };
+                let result = (alt.on_select)(pick.selected, &Ctx { config: &self.config });
+                self.apply(result);
+            }
             KeyCode::Char(c) => {
                 if let Some(i) = pick.shortcuts.iter().position(|&k| k == c) {
                     pick.selected = i;

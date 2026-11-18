@@ -21,10 +21,14 @@ pub fn extension() -> Extension {
         key: 'p',
         default_enabled: true,
         settings: vec![
-            Setting::new("projects_dir", "Projects folder", Kind::Folder, "~/Developer/Projekter"),
-            Setting::new("recent_count", "Recent projects shown", Kind::Count, 10),
-            Setting::new("git_init", "git init new projects", Kind::Toggle, true),
-            Setting::new("create_readme", "README in new projects", Kind::Toggle, true),
+            Setting::new("projects_dir", "Projects folder", Kind::Folder, "~/Developer/Projekter")
+                .help("Folder where new projects are created and recent projects are listed from."),
+            Setting::new("recent_count", "Recent projects shown", Kind::Count, 10)
+                .help("How many projects to show under \"Recent projects\"."),
+            Setting::new("git_init", "git init new projects", Kind::Toggle, true)
+                .help("Run git init in new projects."),
+            Setting::new("create_readme", "README in new projects", Kind::Toggle, true)
+                .help("Add a README.md to new projects."),
         ],
         actions: vec![
             Box::new(new_project::NewProject),

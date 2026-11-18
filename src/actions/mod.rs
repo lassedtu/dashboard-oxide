@@ -117,6 +117,10 @@ pub struct Pick {
     pub items: Vec<String>,
     /// Optional shortcut key per item, shown before it; pressing one selects it.
     pub shortcuts: Vec<char>,
+    /// What Enter does, shown in the hint line ("select" by default).
+    pub enter_label: String,
+    /// A second thing to do with the highlighted item, on its own key (and →).
+    pub alt: Option<Alt>,
     pub selected: usize,
     pub on_select: OnSelect,
     pub on_back: Option<OnBack>,
@@ -132,6 +136,8 @@ impl Pick {
             title: title.into(),
             items,
             shortcuts: Vec::new(),
+            enter_label: "select".into(),
+            alt: None,
             selected: 0,
             on_select: Box::new(on_select),
             on_back: None,
@@ -141,6 +147,23 @@ impl Pick {
     /// Shortcut keys, one per item.
     pub fn shortcuts(mut self, keys: Vec<char>) -> Self {
         self.shortcuts = keys;
+        self
+    }
+
+    /// Name what Enter does, for the hint line.
+    pub fn enter_label(mut self, label: impl Into<String>) -> Self {
+        self.enter_label = label.into();
+        self
+    }
+
+    /// A second action on the highlighted item, on `key` and →, e.g. "s: settings".
+    pub fn alt(
+        mut self,
+        key: char,
+        label: impl Into<String>,
+        on_select: impl FnMut(usize, &Ctx) -> Result<Step> + 'static,
+    ) -> Self {
+        self.alt = Some(Alt { key, label: label.into(), on_select: Box::new(on_select) });
         self
     }
 
@@ -155,6 +178,12 @@ impl Pick {
         self.on_back = Some(Box::new(on_back));
         self
     }
+}
+
+pub struct Alt {
+    pub key: char,
+    pub label: String,
+    pub on_select: OnSelect,
 }
 
 impl From<Prompt> for Step {
@@ -182,7 +211,7 @@ pub trait Action {
 /// with one action shows that action; with several, a submenu.
 pub fn registry(config: &Config) -> Vec<Box<dyn Action>> {
     let mut actions: Vec<Box<dyn Action>> = Vec::new();
-    for ext in extensions::all().into_iter().filter(|ext| ext.is_enabled(config)) {
+    for ext in extensions::all(config).into_iter().filter(|ext| ext.is_enabled(config)) {
         if ext.actions.len() == 1 {
             actions.extend(ext.actions);
         } else if !ext.actions.is_empty() {
