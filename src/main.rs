@@ -14,7 +14,13 @@ fn main() -> anyhow::Result<()> {
     // ratatui::init enters raw mode + alternate screen and installs a panic hook
     // that restores the terminal, so a crash never leaves your shell broken.
     let mut terminal = ratatui::init();
-    let result = App::new(config).run(&mut terminal);
+    let mut app = App::new(config);
+    let result = app.run(&mut terminal);
     ratatui::restore();
-    result
+    result?;
+
+    if let Some(message) = app.exit_message {
+        println!("✓ {message}");
+    }
+    Ok(())
 }

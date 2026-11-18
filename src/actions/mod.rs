@@ -20,8 +20,10 @@ pub struct Ctx<'a> {
     pub config: &'a Config,
 }
 
-pub type OnSubmit = Box<dyn FnOnce(String, &Ctx) -> Result<Step>>;
-pub type OnSelect = Box<dyn FnOnce(usize, &Ctx) -> Result<Step>>;
+/// Continuations are `FnMut` so they can be retried: if one returns an error,
+/// the user stays on the same prompt/picker (input intact) and can try again.
+pub type OnSubmit = Box<dyn FnMut(String, &Ctx) -> Result<Step>>;
+pub type OnSelect = Box<dyn FnMut(usize, &Ctx) -> Result<Step>>;
 
 /// What the app should do after an action (or one stage of it) runs.
 /// `Prompt` and `Pick` carry a continuation, so multi-stage actions are
@@ -29,8 +31,8 @@ pub type OnSelect = Box<dyn FnOnce(usize, &Ctx) -> Result<Step>>;
 pub enum Step {
     /// Finished; show this message and return to the menu.
     Done(String),
-    /// Exit dbx.
-    Quit,
+    /// Exit dbx, optionally printing a message to the shell afterwards.
+    Quit(Option<String>),
     /// Ask for a line of text.
     Prompt { label: String, on_submit: OnSubmit },
     /// Let the user choose one of `items`; the callback gets its index.
@@ -40,7 +42,7 @@ pub enum Step {
 impl Step {
     pub fn prompt(
         label: impl Into<String>,
-        on_submit: impl FnOnce(String, &Ctx) -> Result<Step> + 'static,
+        on_submit: impl FnMut(String, &Ctx) -> Result<Step> + 'static,
     ) -> Step {
         Step::Prompt { label: label.into(), on_submit: Box::new(on_submit) }
     }
@@ -48,7 +50,7 @@ impl Step {
     pub fn pick(
         title: impl Into<String>,
         items: Vec<String>,
-        on_select: impl FnOnce(usize, &Ctx) -> Result<Step> + 'static,
+        on_select: impl FnMut(usize, &Ctx) -> Result<Step> + 'static,
     ) -> Step {
         Step::Pick { title: title.into(), items, on_select: Box::new(on_select) }
     }
@@ -76,9 +78,10 @@ pub fn registry() -> Vec<Box<dyn Action>> {
 /// quit or report back depending on `close_on_open`.
 fn open_project(ctx: &Ctx, path: &Path, message: &str) -> Result<Step> {
     sys::open_in_editor(&ctx.config.editor, path)?;
+    let message = message.to_string();
     if ctx.config.close_on_open {
-        Ok(Step::Quit)
+        Ok(Step::Quit(Some(message)))
     } else {
-        Ok(Step::Done(message.to_string()))
+        Ok(Step::Done(message))
     }
 }

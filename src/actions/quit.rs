@@ -14,6 +14,6 @@ impl Action for Quit {
     }
 
     fn run(&self, _ctx: &Ctx) -> Result<Step> {
-        Ok(Step::Quit)
+        Ok(Step::Quit(None))
     }
 }

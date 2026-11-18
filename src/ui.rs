@@ -3,13 +3,16 @@ use std::sync::LazyLock;
 use ansi_to_tui::IntoText;
 use ratatui::Frame;
 use ratatui::layout::{Constraint, Flex, Layout, Position, Rect};
-use ratatui::style::{Modifier, Style, Stylize};
+use ratatui::style::{Color, Modifier, Style, Stylize};
 use ratatui::text::{Line, Span, Text};
-use ratatui::widgets::{Block, List, ListItem, ListState, Paragraph};
+use ratatui::widgets::{Block, List, ListItem, ListState, Paragraph, Wrap};
 
-use crate::app::{App, Screen};
+use crate::app::{App, Screen, Status};
 
 const WIDTH: u16 = 50;
+/// Status messages (often long error chains) get more room than the menu.
+const STATUS_WIDTH: u16 = 80;
+const STATUS_HEIGHT: u16 = 2;
 /// Max visible rows in a Pick list before it scrolls.
 const MAX_PICK_ROWS: u16 = 15;
 /// Baked into the binary at compile time, so the installed `dbx` doesn't need the file.
@@ -34,7 +37,7 @@ pub fn draw(frame: &mut Frame, app: &App) {
     let mut logo_height = logo.height() as u16;
     let spacer = 1;
     // Hide the logo rather than squash the menu when the terminal is too small.
-    let needed = logo_height + spacer + body_height + 1;
+    let needed = logo_height + spacer + body_height + STATUS_HEIGHT;
     if logo_height == 0 || needed > frame.area().height || logo_width > frame.area().width {
         logo_height = 0;
     }
@@ -43,7 +46,7 @@ pub fn draw(frame: &mut Frame, app: &App) {
         Constraint::Length(logo_height),
         Constraint::Length(if logo_height > 0 { spacer } else { 0 }),
         Constraint::Length(body_height),
-        Constraint::Length(1),
+        Constraint::Length(STATUS_HEIGHT),
     ])
     .flex(Flex::Center)
     .areas(frame.area());
@@ -57,14 +60,14 @@ pub fn draw(frame: &mut Frame, app: &App) {
         frame.render_widget(Paragraph::new(logo.clone()), logo_area);
     }
 
-    let center = |area: Rect| {
-        let [area] = Layout::horizontal([Constraint::Length(WIDTH)])
+    let center = |area: Rect, width: u16| {
+        let [area] = Layout::horizontal([Constraint::Length(width)])
             .flex(Flex::Center)
             .areas(area);
         area
     };
-    let body = center(body);
-    let status_area = center(status_area);
+    let body = center(body, WIDTH);
+    let status_area = center(status_area, STATUS_WIDTH);
 
     match &app.screen {
         Screen::Menu => draw_menu(frame, app, body),
@@ -78,14 +81,21 @@ pub fn draw(frame: &mut Frame, app: &App) {
     }
 
     if let Some(status) = &app.status {
-        let line = Line::from(status.text.as_str()).centered();
-        let line = if status.is_error {
-            line.red()
-        } else {
-            line.green()
-        };
-        frame.render_widget(line, status_area);
+        draw_status(frame, status, status_area);
     }
+}
+
+fn draw_status(frame: &mut Frame, status: &Status, area: Rect) {
+    let (icon, color) = if status.is_error {
+        ("✗", Color::Red)
+    } else {
+        ("✓", Color::Green)
+    };
+    let paragraph = Paragraph::new(format!("{icon} {}", status.text))
+        .fg(color)
+        .centered()
+        .wrap(Wrap { trim: true });
+    frame.render_widget(paragraph, area);
 }
 
 fn draw_menu(frame: &mut Frame, app: &App, area: Rect) {
