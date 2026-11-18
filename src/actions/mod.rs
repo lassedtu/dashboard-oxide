@@ -4,12 +4,16 @@
 //! what should happen next, and the app/UI layer carries it out. Adding a
 //! feature = writing a new file here and listing it in `registry()`.
 
-mod hello;
+mod new_project;
 mod quit;
+mod recent_projects;
+
+use std::path::Path;
 
 use anyhow::Result;
 
 use crate::config::Config;
+use crate::sys;
 
 /// What an action gets access to while running.
 pub struct Ctx<'a> {
@@ -61,5 +65,20 @@ pub trait Action {
 
 /// All actions, in menu order.
 pub fn registry() -> Vec<Box<dyn Action>> {
-    vec![Box::new(hello::Hello), Box::new(quit::Quit)]
+    vec![
+        Box::new(new_project::NewProject),
+        Box::new(recent_projects::RecentProjects),
+        Box::new(quit::Quit),
+    ]
+}
+
+/// Shared ending for actions that open a project: launch the editor, then
+/// quit or report back depending on `close_on_open`.
+fn open_project(ctx: &Ctx, path: &Path, message: &str) -> Result<Step> {
+    sys::open_in_editor(&ctx.config.editor, path)?;
+    if ctx.config.close_on_open {
+        Ok(Step::Quit)
+    } else {
+        Ok(Step::Done(message.to_string()))
+    }
 }
