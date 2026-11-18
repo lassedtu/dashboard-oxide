@@ -54,6 +54,7 @@ impl Entry {
 
     fn row(&self, config: &Config) -> String {
         let value = self.setting.display(&self.value(config));
+        let value = if value.is_empty() { "not set".into() } else { value };
         row(&self.setting.label, &value)
     }
 }

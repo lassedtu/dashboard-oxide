@@ -5,6 +5,9 @@
 - **Coding projects**
   - **New project**: name it, and dbx creates the folder in your projects directory, adds a README, runs `git init`, and opens it in your editor.
   - **Recent projects**: lists your most recently active projects and opens the one you pick.
+- **Reports** (off by default): school reports in [Typst](https://typst.app).
+  - **New report**: pick a course, name the report, and dbx creates `<course>/Assignments/Report-Name/` from the Typst template with title, course and author filled in, then opens it in your editor.
+  - **Recent reports**: your most recently active reports across all courses.
 - **Config**: view and change every setting from inside dbx, or open `~/.dbx/config.toml` in your editor.
 
 Features come as **extensions** (Coding projects is one), each with its own settings, switched on and off under Config → Extensions.
@@ -86,11 +89,26 @@ recent_count = 10
 # What to set up in new projects.
 git_init = true
 create_readme = true
+
+[extensions.reports]
+enabled = false
+# Author on new reports.
+name = ""
+# One folder per course, named like "02323 Introduction to Statistics".
+root = "~/Documents/DTU"
+# Folder inside each course where reports are created.
+assignments_dir = "Assignments"
+# How many reports to show under "Recent reports".
+recent_count = 10
 ```
 
 Any key you leave out falls back to its default, so old config files keep working as new options are added. Values of the wrong type (say, `recent_count = "ten"`) are reported when dbx starts. Config files from before extensions, with `projects_dir` and `[new_project]` at the top, are moved into `[extensions.coding-projects]` automatically, comments included. dbx re-reads the file every time you start an action, so edits take effect without restarting.
 
 **Editors:** GUI editors (VS Code, Zed, ...) are launched in the background. Terminal editors (`nvim`, `vim`, `vi`, `nano`, `hx`, `micro`, `kak`, `emacs -nw`, ...) get the terminal: dbx steps aside while the editor runs and comes back when you quit it. When `close_on_open` is on, dbx exits and the editor opens in its place.
+
+**Reports:** turn it on and set your name under Config → Extensions → Reports. Course folders are the folders in `root` whose name starts with a course number, so folders like `Misc` or `Old Courses` are skipped. A report named `Lab report 2` goes in `Lab-report-2/`; its `src/report-settings.typ` gets `title = "Lab report 2"`, `subtitle` = the course folder's name, and `author` = your name. Nothing else in the template is changed.
+
+The template in `assets/templates/typst-template/` is built into `dbx`. To use a different one without rebuilding, put it in `~/.dbx/templates/typst-template/`; it needs a `src/report-settings.typ` with `#let title`, `#let subtitle` and `#let author` lines.
 
 **How "recent" is decided:** a folder's own modified time only changes when files directly inside it are added or removed, so dbx also checks `.git/index` and `.git/HEAD`. Staging, committing, and switching branches all count as activity. Hidden folders are skipped.
 
@@ -98,6 +116,8 @@ Any key you leave out falls back to its default, so old config files keep workin
 
 ```
 assets/logo.ans          ANSI-art logo, compiled into the binary
+assets/templates/        report template, compiled into the binary
+build.rs                 rebuilds when the template changes
 install.sh               installer / uninstaller
 src/
   main.rs                CLI flags, terminal setup and teardown
@@ -116,6 +136,12 @@ src/
       mod.rs             the extension: settings, actions
       new_project.rs
       recent_projects.rs
+    reports/
+      mod.rs             the extension: settings, finding courses
+      new_report.rs      course picker → name → create from template
+      recent_reports.rs
+      template.rs        embedded template, filling report-settings.typ
+    folders.rs           shared: list folders by activity, create, validate names
 ```
 
 ## Adding an extension
@@ -226,4 +252,4 @@ cargo run      # run from source
 cargo test
 ```
 
-The logo lives in `assets/logo.ans` and may contain ANSI color codes. It's embedded at compile time, so rebuild after editing it.
+The logo lives in `assets/logo.ans` and may contain ANSI color codes. It and the report template are embedded at compile time, so rebuild (or reinstall) after editing them.

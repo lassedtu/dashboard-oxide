@@ -29,6 +29,17 @@ recent_count = 10
 # What to set up in new projects.
 git_init = true
 create_readme = true
+
+[extensions.reports]
+enabled = false
+# Author on new reports.
+name = ""
+# One folder per course, named like "02323 Introduction to Statistics".
+root = "~/Documents/DTU"
+# Folder inside each course where reports are created.
+assignments_dir = "Assignments"
+# How many reports to show under "Recent reports".
+recent_count = 10
 "#;
 
 /// The core settings, i.e. everything not owned by an extension.
@@ -115,7 +126,6 @@ impl Config {
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum Kind {
     /// Any non-empty text.
-    #[allow(dead_code)] // first used by the Reports extension
     Text,
     /// An existing folder; `~` is allowed and kept as typed.
     Folder,

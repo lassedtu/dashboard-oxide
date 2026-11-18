@@ -12,6 +12,8 @@
 //! actions and always present.
 
 pub mod coding_projects;
+pub mod folders;
+pub mod reports;
 
 use anyhow::{Context, Result};
 use serde::de::DeserializeOwned;
@@ -84,7 +86,7 @@ impl Extension {
 
 /// Every known extension, enabled or not, in menu order.
 pub fn all() -> Vec<Extension> {
-    vec![coding_projects::extension()]
+    vec![coding_projects::extension(), reports::extension()]
 }
 
 #[cfg(test)]
