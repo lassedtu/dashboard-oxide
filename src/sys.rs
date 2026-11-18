@@ -53,6 +53,14 @@ pub fn spawn_detached(mut command: Command) -> Result<()> {
     Ok(())
 }
 
+/// Open a URL (e.g. `obsidian://...`) with the system's handler for it.
+pub fn open_url(url: &str) -> Result<()> {
+    let opener = if cfg!(target_os = "macos") { "open" } else { "xdg-open" };
+    let mut command = Command::new(opener);
+    command.arg(url);
+    spawn_detached(command)
+}
+
 /// Run a program with no terminal and wait, returning its stdout. On failure
 /// the error is the last line it printed to stderr (or stdout).
 pub fn run_captured(mut command: Command) -> Result<String> {

@@ -58,10 +58,20 @@ pub fn discover(config_path: &Path, taken: &[String]) -> (Vec<Extension>, Vec<Br
         };
         match result {
             Ok(ext) => found.push(ext),
-            Err(err) => broken.push(Broken { id, error: format!("{err:#}") }),
+            Err(err) => broken.push(Broken { id, error: one_line(&format!("{err:#}")) }),
         }
     }
     (found, broken)
+}
+
+/// TOML errors come with a code snippet over several lines; keep the words.
+fn one_line(error: &str) -> String {
+    error
+        .lines()
+        .map(str::trim)
+        .filter(|l| !l.is_empty() && !l.contains('|'))
+        .collect::<Vec<_>>()
+        .join(" ")
 }
 
 #[derive(Deserialize)]
@@ -114,7 +124,7 @@ fn load(id: &str, dir: &Path) -> Result<Extension> {
     }
     let path = dir.join(MANIFEST);
     let text = fs::read_to_string(&path).with_context(|| format!("no {MANIFEST} in {}", dir.display()))?;
-    let manifest: Manifest = toml::from_str(&text).with_context(|| format!("in {}", path.display()))?;
+    let manifest: Manifest = toml::from_str(&text).with_context(|| format!("{MANIFEST} is invalid"))?;
 
     if manifest.actions.is_empty() {
         bail!("{MANIFEST} has no [[actions]]");
@@ -335,6 +345,7 @@ prompt = "Todo"
         assert!(error("nokey").contains("needs a `key`"));
         assert!(error("quitter").contains("reserved"));
         assert!(error("typo").contains("acshuns"));
+        assert!(!error("typo").contains('\n'), "{}", error("typo"));
         assert!(error("Bad.Id").contains("a-z"));
         assert!(error("empty").contains("no extension.toml"));
         assert!(error("coding-projects").contains("built-in"));
@@ -347,10 +358,10 @@ prompt = "Todo"
     #[test]
     fn several_actions_make_a_submenu_where_c_and_q_are_fine() {
         let (dir, config) = temp_config("ext-group");
-        install(&config, "notes", "name = \"Notes\"\nkey = \"o\"\n[[actions]]\ntitle = \"Close\"\nkey = \"c\"\nrun = \"echo closed\"\n[[actions]]\ntitle = \"Query\"\nkey = \"q\"\nrun = \"echo hi\"\nterminal = true\n", "");
+        install(&config, "jot", "name = \"Jot\"\nkey = \"o\"\n[[actions]]\ntitle = \"Close\"\nkey = \"c\"\nrun = \"echo closed\"\n[[actions]]\ntitle = \"Query\"\nkey = \"q\"\nrun = \"echo hi\"\nterminal = true\n", "");
         let config = config.reload().unwrap();
         let menu: Vec<_> = crate::actions::registry(&config).iter().map(|a| (a.key(), a.title().to_string())).collect();
-        assert!(menu.contains(&('o', "Notes".into())), "{menu:?}");
+        assert!(menu.contains(&('o', "Jot".into())), "{menu:?}");
 
         let ext = &discover(&config.path, &[]).0[0];
         let ctx = Ctx { config: &config };

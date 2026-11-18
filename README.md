@@ -8,6 +8,7 @@
 - **Reports** (off by default): school reports in [Typst](https://typst.app).
   - **New report**: pick a course, name the report, and dbx creates `<course>/Assignments/Report-Name/` from the Typst template with title, course and author filled in, then opens it in your editor.
   - **Recent reports**: your most recently active reports across all courses.
+- **Notes** (off by default): each course's notes, with how many there are and when you last edited them. Pick a course to open its notes in Obsidian (or another app).
 - **Config**: view and change every setting from inside dbx, or open `~/.dbx/config.toml` in your editor.
 
 Features come as **extensions** (Coding projects is one), each with its own settings, switched on and off under Config → Extensions. You can add your own as a folder with a small TOML file and a script; see [Installing extensions](#installing-extensions).
@@ -101,6 +102,8 @@ projects_dir = "~/Developer/Projekter"
 
 The template in `assets/templates/typst-template/` is built into `dbx`. To use a different one without rebuilding, put it in `~/.dbx/templates/typst-template/`; it needs a `src/report-settings.typ` with `#let title`, `#let subtitle` and `#let author` lines.
 
+**Notes:** turn it on under Config → Extensions → Notes. Each course's notes are in a folder named after the course plus ` Notes`, e.g. `02335 Operating systems/02335 Operating systems Notes/`. The list shows every course, most recently edited notes first, with the number of `.md` notes (hidden folders like `.obsidian` don't count). Picking a course without notes creates its folder. With the app set to `obsidian`, dbx opens an `obsidian://open?path=...` link, which opens the Obsidian vault containing that folder, so the notes folder (or a folder above it) needs to be a vault. Any other app is run as a command with the folder, like the editor.
+
 **How "recent" is decided:** a folder's own modified time only changes when files directly inside it are added or removed, so dbx also checks `.git/index` and `.git/HEAD`. Staging, committing, and switching branches all count as activity. Hidden folders are skipped.
 
 ## Installing extensions
@@ -187,7 +190,8 @@ src/
       new_report.rs      course picker → name → create from template
       recent_reports.rs
       template.rs        embedded template, filling report-settings.typ
-    folders.rs           shared: list folders by activity, create, validate names
+    notes.rs             course notes, opened in Obsidian
+    folders.rs           shared: course folders, folders by activity, create, validate names
 ```
 
 ## Adding an extension

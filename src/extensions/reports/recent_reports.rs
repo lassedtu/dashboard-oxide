@@ -2,10 +2,9 @@ use std::time::SystemTime;
 
 use anyhow::Result;
 
-use super::new_report::course_number;
 use super::{courses, settings};
 use crate::actions::{Action, Ctx, Step, open_project};
-use crate::extensions::folders::{self, Folder};
+use crate::extensions::folders::{self, Folder, course_number};
 
 pub struct RecentReports;
 

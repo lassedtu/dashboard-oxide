@@ -366,8 +366,8 @@ mod tests {
         let (dir, config) = temp_config("menu-broken");
         crate::extensions::external::tests::install(&config, "oops", "name = 1\n", "");
         let list = pick(extensions_list(&config, 2, 0));
-        assert!(list.items[2].starts_with("[!]   oops"), "{:?}", list.items);
-        let err = select(extensions_list(&config, 2, 0), 2, &config).err().expect("an error");
+        let row = list.items.iter().position(|i| i.starts_with("[!]   oops")).expect("broken row");
+        let err = select(extensions_list(&config, 2, 0), row, &config).err().expect("an error");
         assert!(err.to_string().starts_with("oops: "), "{err}");
         fs::remove_dir_all(&dir).unwrap();
     }

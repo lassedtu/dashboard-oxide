@@ -65,32 +65,6 @@ fn settings(config: &Config) -> Result<Settings> {
     Ok(settings)
 }
 
-/// Course folders in `root`, by name. A course folder starts with its course
-/// number, so "Misc", "Old Courses" and the like are left out.
 fn courses(settings: &Settings) -> Result<Vec<Folder>> {
-    let mut courses: Vec<Folder> = folders::subfolders(&settings.root)?
-        .into_iter()
-        .filter(|f| is_course(&f.name))
-        .collect();
-    courses.sort_by(|a, b| a.name.cmp(&b.name));
-    Ok(courses)
-}
-
-fn is_course(name: &str) -> bool {
-    let number = name.split_whitespace().next().unwrap_or_default();
-    !number.is_empty() && number.chars().all(|c| c.is_ascii_digit())
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn course_folders_start_with_a_number() {
-        assert!(is_course("02323 Introduction to Statistics"));
-        assert!(is_course("62550 UX"));
-        assert!(!is_course("Old Courses"));
-        assert!(!is_course("Misc"));
-        assert!(!is_course("2023-notes"));
-    }
+    folders::courses(&settings.root)
 }

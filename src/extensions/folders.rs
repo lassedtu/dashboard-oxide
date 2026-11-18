@@ -46,6 +46,25 @@ fn last_activity(path: &Path) -> Option<SystemTime> {
         .max()
 }
 
+/// Course folders in `root` (for Reports and Notes), by name. A course
+/// folder starts with its course number ("02323 Introduction to
+/// Statistics"), so "Misc", "Old Courses" and the like are left out.
+pub fn courses(root: &Path) -> Result<Vec<Folder>> {
+    let mut courses: Vec<Folder> = subfolders(root)?.into_iter().filter(|f| is_course(&f.name)).collect();
+    courses.sort_by(|a, b| a.name.cmp(&b.name));
+    Ok(courses)
+}
+
+fn is_course(name: &str) -> bool {
+    let number = course_number(name);
+    !number.is_empty() && number.chars().all(|c| c.is_ascii_digit())
+}
+
+/// "02323" from "02323 Introduction to Statistics".
+pub fn course_number(course: &str) -> &str {
+    course.split_whitespace().next().unwrap_or(course)
+}
+
 /// A name typed by the user, checked to be usable as a single folder name.
 pub fn validate_name(raw: &str) -> Result<&str> {
     let name = raw.trim();
@@ -145,6 +164,16 @@ pub mod tests {
         assert!(validate_name("a/b").is_err());
         assert!(validate_name("..").is_err());
         assert!(validate_name(".hidden").is_err());
+    }
+
+    #[test]
+    fn course_folders_start_with_a_number() {
+        assert!(is_course("02323 Introduction to Statistics"));
+        assert!(is_course("62550 UX"));
+        assert!(!is_course("Old Courses"));
+        assert!(!is_course("Misc"));
+        assert!(!is_course("2023-notes"));
+        assert_eq!(course_number("02335 Operating systems"), "02335");
     }
 
     #[test]

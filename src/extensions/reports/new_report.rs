@@ -6,7 +6,7 @@ use anyhow::{Result, bail};
 use super::template::{self, Fields};
 use super::{Settings, courses, settings};
 use crate::actions::{Action, Ctx, Pick, Prompt, Step, open_project};
-use crate::extensions::folders;
+use crate::extensions::folders::{self, course_number};
 
 pub struct NewReport;
 
@@ -76,10 +76,6 @@ fn create(settings: &Settings, course: &str, course_dir: &Path, title: &str) -> 
     Ok(path)
 }
 
-/// "02323" from "02323 Introduction to Statistics".
-pub fn course_number(course: &str) -> &str {
-    course.split_whitespace().next().unwrap_or(course)
-}
 
 #[cfg(test)]
 mod tests {

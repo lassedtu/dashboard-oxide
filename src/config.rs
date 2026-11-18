@@ -16,7 +16,7 @@ const HEADER: &str = "\
 ";
 
 /// The core settings, i.e. everything not owned by an extension.
-#[derive(Debug, Deserialize, PartialEq)]
+#[derive(Clone, Debug, Deserialize, PartialEq)]
 #[serde(default)] // missing keys fall back to Default, so old configs keep working
 pub struct Config {
     /// Where this config was loaded from (not a setting).
@@ -453,9 +453,8 @@ pub mod tests {
             assert!(text.contains(&format!("# {}: {}\n[extensions.{}]", ext.name, ext.description, ext.id)));
             for setting in &ext.settings {
                 assert_eq!(config.get(&ext.key_for(&setting.key)), Some(&setting.default));
-                if !setting.help.is_empty() {
-                    assert!(text.contains(&format!("# {}\n{} =", setting.help, setting.key)), "{text}");
-                }
+                let comment: String = setting.help.lines().map(|l| format!("# {}\n", l.trim())).collect();
+                assert!(text.contains(&format!("{comment}{} =", setting.key)), "{text}");
             }
         }
         assert!(text.contains("# Quit dbx after opening something in the editor.\nclose_on_open = true"));

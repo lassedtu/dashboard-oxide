@@ -14,6 +14,7 @@
 pub mod coding_projects;
 pub mod external;
 pub mod folders;
+pub mod notes;
 pub mod reports;
 
 use std::path::{Path, PathBuf};
@@ -110,7 +111,7 @@ pub fn broken(config: &Config) -> Vec<external::Broken> {
 }
 
 fn builtin() -> Vec<Extension> {
-    vec![coding_projects::extension(), reports::extension()]
+    vec![coding_projects::extension(), reports::extension(), notes::extension()]
 }
 
 #[cfg(test)]
