@@ -5,8 +5,9 @@
 - **New project**: name it, and dbx creates the folder in your projects directory, adds a README, runs `git init`, and opens it in your editor.
 - **Recent projects**: lists your most recently active projects and opens the one you pick.
 - **Config**: view and change every setting from inside dbx, or open `~/.dbx/config.toml` in your editor.
+- **Extensions**: New project and Recent projects are extensions you can switch off under Config → Extensions.
 
-Built with Rust and [ratatui](https://ratatui.rs). Designed so new actions are a single file.
+Built with Rust and [ratatui](https://ratatui.rs). Designed so new features are a single file.
 
 ## Install
 
@@ -50,6 +51,7 @@ Press `c` for the Config screen. It lists every setting with its current value:
 - **On/off settings** flip when you press Enter.
 - **Projects folder and recent count** open a prompt pre-filled with the current value. Invalid input (a folder that doesn't exist, a count of 0) is rejected and nothing is saved.
 - **Editor** offers VS Code, Cursor, Zed, Sublime, Neovim, Vim, and Helix, or "Custom…" for any command. Only editors found on your `PATH` are saved.
+- **Extensions** lists every extension; Enter switches the highlighted one on or off.
 - **Open config.toml in editor** opens the file itself.
 
 Changes are written straight to the file, touching only the line that changed, so your comments are kept.
@@ -73,6 +75,11 @@ close_on_open = true
 [new_project]
 git_init = true
 create_readme = true
+
+# Extensions to leave out of the menu, by id. Easiest to toggle from
+# Config -> Extensions inside dbx.
+[extensions]
+disabled = []
 ```
 
 Any key you leave out falls back to its default, so old config files keep working as new options are added. dbx re-reads the file every time you start an action, so edits take effect without restarting.
@@ -94,13 +101,17 @@ src/
   sys.rs                 shell-outs (editor detection, git, PATH lookup)
   actions/
     mod.rs               Action trait, Step enum, registry
-    new_project.rs
-    recent_projects.rs
     config_menu.rs       the Config screen and its settings
     quit.rs
+  extensions/
+    mod.rs               Extension struct, list of built-in extensions
+    new_project.rs
+    recent_projects.rs
 ```
 
 ## Adding an action
+
+Menu entries are actions, grouped into **extensions** that can be switched on and off. Config and Quit are core actions and always shown; everything else belongs to an extension.
 
 Actions never draw anything. They return a `Step`, and the app turns that into a screen:
 
@@ -132,12 +143,12 @@ Pick::new("Choose", items, on_select)
 
 `ctx.config` is re-read from disk before every action and callback, so it always matches the file.
 
-1. Create `src/actions/my_action.rs`:
+1. Create `src/extensions/my_action.rs`:
 
    ```rust
    use anyhow::Result;
 
-   use super::{Action, Ctx, Step};
+   use crate::actions::{Action, Ctx, Step};
 
    pub struct MyAction;
 
@@ -153,18 +164,25 @@ Pick::new("Choose", items, on_select)
    }
    ```
 
-2. Register it in `src/actions/mod.rs`:
+2. Add an extension for it in `src/extensions/mod.rs`:
 
    ```rust
    mod my_action;
 
-   pub fn registry() -> Vec<Box<dyn Action>> {
+   fn builtin() -> Vec<Extension> {
        vec![
            // ...
-           Box::new(my_action::MyAction),
+           Extension {
+               id: "my-action".into(),     // stored in config.toml; don't change it later
+               name: "My action".into(),
+               description: "Says hi".into(),
+               actions: vec![Box::new(my_action::MyAction)],
+           },
        ]
    }
    ```
+
+   It shows up in the menu, and under Config → Extensions, straight away.
 
 **Adding a setting:**
 1. Add a field to `Config` in `src/config.rs`.

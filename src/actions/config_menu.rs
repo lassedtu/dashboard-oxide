@@ -11,7 +11,7 @@ use anyhow::{Result, bail};
 
 use super::{Action, Ctx, Pick, Prompt, Step, open_in_editor};
 use crate::config::{self, Config};
-use crate::sys;
+use crate::{extensions, sys};
 
 pub struct ConfigMenu;
 
@@ -37,15 +37,17 @@ enum Setting {
     CloseOnOpen,
     GitInit,
     CreateReadme,
+    Extensions,
 }
 
-const SETTINGS: [Setting; 6] = [
+const SETTINGS: [Setting; 7] = [
     Setting::ProjectsDir,
     Setting::Editor,
     Setting::RecentCount,
     Setting::CloseOnOpen,
     Setting::GitInit,
     Setting::CreateReadme,
+    Setting::Extensions,
 ];
 
 const LABEL_WIDTH: usize = 23;
@@ -60,6 +62,7 @@ impl Setting {
             Setting::CloseOnOpen => "Quit after opening",
             Setting::GitInit => "git init new projects",
             Setting::CreateReadme => "README in new projects",
+            Setting::Extensions => "Extensions",
         }
     }
 
@@ -72,6 +75,7 @@ impl Setting {
             Setting::CloseOnOpen => "close_on_open",
             Setting::GitInit => "new_project.git_init",
             Setting::CreateReadme => "new_project.create_readme",
+            Setting::Extensions => "extensions.disabled",
         }
     }
 
@@ -84,6 +88,11 @@ impl Setting {
             Setting::CloseOnOpen => on_off(c.close_on_open),
             Setting::GitInit => on_off(c.new_project.git_init),
             Setting::CreateReadme => on_off(c.new_project.create_readme),
+            Setting::Extensions => {
+                let all = extensions::all();
+                let on = all.iter().filter(|e| e.is_enabled(c)).count();
+                format!("{on} of {} on", all.len())
+            }
         }
     }
 
@@ -100,6 +109,7 @@ impl Setting {
             Setting::GitInit => toggle(c.new_project.git_init),
             Setting::CreateReadme => toggle(c.new_project.create_readme),
             Setting::Editor => Ok(editor_picker(c, row)),
+            Setting::Extensions => Ok(extensions_picker(c, row, 0)),
 
             Setting::ProjectsDir => Ok(Prompt::new("Projects folder", move |text, ctx| {
                 let text = text.trim();
@@ -189,6 +199,37 @@ fn editor_picker(config: &Config, row: usize) -> Step {
     .into()
 }
 
+/// Every extension with its on/off state. Enter toggles the highlighted one
+/// and stays on this screen.
+fn extensions_picker(config: &Config, row: usize, selected: usize) -> Step {
+    let all = extensions::all();
+    let items = all
+        .iter()
+        .map(|e| {
+            let state = if e.is_enabled(config) { "on" } else { "off" };
+            format!("{state:<5}{:<18}{}", e.name, fit(&e.description, VALUE_WIDTH))
+        })
+        .collect();
+    let ids: Vec<String> = all.into_iter().map(|e| e.id).collect();
+
+    Pick::new("Extensions", items, move |i, ctx| {
+        let id = &ids[i];
+        let mut disabled = ctx.config.extensions.disabled.clone();
+        match disabled.iter().position(|d| d == id) {
+            Some(pos) => {
+                disabled.remove(pos);
+            }
+            None => disabled.push(id.clone()),
+        }
+        let disabled: toml_edit::Array = disabled.iter().map(String::as_str).collect();
+        let updated = save(ctx, Setting::Extensions.key(), disabled)?;
+        Ok(extensions_picker(&updated, row, i))
+    })
+    .selected(selected)
+    .back(move |ctx| Ok(menu(ctx.config, row)))
+    .into()
+}
+
 fn save_editor(ctx: &Ctx, editor: &str, row: usize) -> Result<Step> {
     let editor = editor.trim();
     let Some(program) = editor.split_whitespace().next() else {
@@ -272,6 +313,29 @@ mod tests {
 
         assert!((prompt.on_submit)(" 25 ".into(), &ctx).is_ok());
         assert_eq!(config.reload().unwrap().recent_count, 25);
+
+        fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn extensions_toggle_and_keep_unknown_ids() {
+        let (dir, config) = temp_config("extensions");
+        // An id from an extension that's no longer installed.
+        config::set(&config.path, "extensions.disabled", toml_edit::Array::from_iter(["gone"]))
+            .unwrap();
+        let config = config.reload().unwrap();
+
+        let Step::Pick(mut pick) = extensions_picker(&config, 6, 0) else { panic!() };
+        assert!(pick.items[1].starts_with("on   Recent projects"));
+        let Step::Pick(pick) = (pick.on_select)(1, &Ctx { config: &config }).unwrap() else {
+            panic!()
+        };
+        assert_eq!(pick.selected, 1);
+        assert!(pick.items[1].starts_with("off  Recent projects"));
+
+        let config = config.reload().unwrap();
+        assert_eq!(config.extensions.disabled, ["gone", "recent-projects"]);
+        assert_eq!(Setting::Extensions.display(&config), "1 of 2 on");
 
         fs::remove_dir_all(&dir).unwrap();
     }

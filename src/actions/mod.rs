@@ -1,13 +1,11 @@
 //! Everything dbx can do is an `Action`.
 //!
 //! Actions never draw anything themselves. They return a `Step` describing
-//! what should happen next, and the app/UI layer carries it out. Adding a
-//! feature = writing a new file here and listing it in `registry()`.
+//! what should happen next, and the app/UI layer carries it out. Optional
+//! features live in `crate::extensions`; only the core actions are here.
 
 mod config_menu;
-mod new_project;
 mod quit;
-mod recent_projects;
 
 use std::path::Path;
 use std::process::Command;
@@ -15,7 +13,7 @@ use std::process::Command;
 use anyhow::Result;
 
 use crate::config::Config;
-use crate::sys;
+use crate::{extensions, sys};
 
 /// What an action gets access to while running. `config` is re-read from
 /// disk before every action and callback, so it always reflects the file.
@@ -158,19 +156,21 @@ pub trait Action {
     fn run(&self, ctx: &Ctx) -> Result<Step>;
 }
 
-/// All actions, in menu order.
-pub fn registry() -> Vec<Box<dyn Action>> {
-    vec![
-        Box::new(new_project::NewProject),
-        Box::new(recent_projects::RecentProjects),
-        Box::new(config_menu::ConfigMenu),
-        Box::new(quit::Quit),
-    ]
+/// The main menu: actions from enabled extensions, then the core actions.
+pub fn registry(config: &Config) -> Vec<Box<dyn Action>> {
+    let mut actions: Vec<Box<dyn Action>> = extensions::all()
+        .into_iter()
+        .filter(|ext| ext.is_enabled(config))
+        .flat_map(|ext| ext.actions)
+        .collect();
+    actions.push(Box::new(config_menu::ConfigMenu));
+    actions.push(Box::new(quit::Quit));
+    actions
 }
 
 /// Open `path` in the configured editor, then continue with `then`.
 /// GUI editors are launched in the background; terminal editors get the terminal.
-fn open_in_editor(ctx: &Ctx, path: &Path, then: Step) -> Result<Step> {
+pub(crate) fn open_in_editor(ctx: &Ctx, path: &Path, then: Step) -> Result<Step> {
     let editor = sys::editor_command(&ctx.config.editor, path)?;
     if editor.in_terminal {
         Ok(Step::RunInTerminal { command: editor.command, then: Box::new(then) })
@@ -182,7 +182,7 @@ fn open_in_editor(ctx: &Ctx, path: &Path, then: Step) -> Result<Step> {
 
 /// Shared ending for actions that open a project: open the editor, then
 /// quit or report back depending on `close_on_open`.
-fn open_project(ctx: &Ctx, path: &Path, message: &str) -> Result<Step> {
+pub(crate) fn open_project(ctx: &Ctx, path: &Path, message: &str) -> Result<Step> {
     let message = message.to_string();
     let then = if ctx.config.close_on_open {
         Step::Quit(Some(message))
@@ -190,4 +190,21 @@ fn open_project(ctx: &Ctx, path: &Path, message: &str) -> Result<Step> {
         Step::Done(message)
     };
     open_in_editor(ctx, path, then)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn registry_leaves_out_disabled_extensions() {
+        let titles = |config: &Config| -> Vec<String> {
+            registry(config).iter().map(|a| a.title().to_string()).collect()
+        };
+        let mut config = Config::default();
+        assert_eq!(titles(&config), ["New project", "Recent projects", "Config", "Quit"]);
+
+        config.extensions.disabled = vec!["recent-projects".into(), "not-installed".into()];
+        assert_eq!(titles(&config), ["New project", "Config", "Quit"]);
+    }
 }

@@ -24,6 +24,11 @@ close_on_open = true
 [new_project]
 git_init = true
 create_readme = true
+
+# Extensions to leave out of the menu, by id. Easiest to toggle from
+# Config -> Extensions inside dbx.
+[extensions]
+disabled = []
 "#;
 
 #[derive(Debug, Deserialize, PartialEq)]
@@ -37,6 +42,15 @@ pub struct Config {
     pub recent_count: usize,
     pub close_on_open: bool,
     pub new_project: NewProjectConfig,
+    pub extensions: ExtensionsConfig,
+}
+
+#[derive(Debug, Default, Deserialize, PartialEq)]
+#[serde(default)]
+pub struct ExtensionsConfig {
+    /// Ids of extensions hidden from the menu. Unknown ids are ignored, so
+    /// uninstalling an extension doesn't break the config.
+    pub disabled: Vec<String>,
 }
 
 #[derive(Debug, Deserialize, PartialEq)]
@@ -55,6 +69,7 @@ impl Default for Config {
             recent_count: 10,
             close_on_open: true,
             new_project: NewProjectConfig::default(),
+            extensions: ExtensionsConfig::default(),
         }
     }
 }
@@ -98,18 +113,32 @@ impl Config {
 }
 
 /// Set one key in the config file at `path`, keeping comments and formatting.
-/// `key` may be dotted for tables, e.g. `"new_project.git_init"`.
+/// `key` may be dotted for tables, e.g. `"new_project.git_init"`; missing
+/// tables are created (older config files may not have them yet).
 pub fn set(path: &Path, key: &str, value: impl Into<toml_edit::Value>) -> Result<()> {
     let text = fs::read_to_string(path).with_context(|| format!("reading {}", path.display()))?;
     let mut doc: toml_edit::DocumentMut =
         text.parse().with_context(|| format!("parsing {}", path.display()))?;
 
-    let mut parts = key.split('.');
-    let mut item = &mut doc[parts.next().context("empty config key")?];
-    for part in parts {
-        item = &mut item[part];
+    let (tables, name) = match key.rsplit_once('.') {
+        Some((tables, name)) => (tables.split('.').collect(), name),
+        None => (Vec::new(), key),
+    };
+    let mut table: &mut dyn toml_edit::TableLike = doc.as_table_mut();
+    for part in tables {
+        table = table
+            .entry(part)
+            .or_insert(toml_edit::table())
+            .as_table_like_mut()
+            .with_context(|| format!("`{part}` in {} is not a table", path.display()))?;
     }
-    *item = toml_edit::value(value);
+    match table.get_mut(name) {
+        // Replace in place, so the comment above the key is kept.
+        Some(item) => *item = toml_edit::value(value),
+        None => {
+            table.insert(name, toml_edit::value(value));
+        }
+    }
 
     fs::write(path, doc.to_string()).with_context(|| format!("writing {}", path.display()))
 }
@@ -197,6 +226,27 @@ mod tests {
         assert_eq!(config.recent_count, 5);
         assert!(!config.new_project.git_init);
         assert!(config.new_project.create_readme);
+
+        fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn set_creates_missing_tables() {
+        let dir = std::env::temp_dir().join(format!("dbx-set-missing-{}", std::process::id()));
+        let path = dir.join("config.toml");
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(&dir).unwrap();
+        fs::write(&path, "editor = \"vim\"\n").unwrap(); // a config from before [extensions]
+
+        let disabled: toml_edit::Array = ["recent-projects"].into_iter().collect();
+        set(&path, "extensions.disabled", disabled).unwrap();
+
+        let config = Config::load_from(&path).unwrap();
+        assert_eq!(config.editor, "vim");
+        assert_eq!(config.extensions.disabled, ["recent-projects"]);
+
+        fs::write(&path, "extensions = 3\n").unwrap();
+        assert!(set(&path, "extensions.disabled", false).is_err());
 
         fs::remove_dir_all(&dir).unwrap();
     }

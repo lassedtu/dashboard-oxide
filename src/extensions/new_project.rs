@@ -2,7 +2,7 @@ use std::fs;
 
 use anyhow::{Context, Result, bail};
 
-use super::{Action, Ctx, Step, open_project};
+use crate::actions::{Action, Ctx, Step, open_project};
 use crate::sys;
 
 pub struct NewProject;

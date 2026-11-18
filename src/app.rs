@@ -41,8 +41,8 @@ pub struct App {
 impl App {
     pub fn new(config: Config) -> Self {
         Self {
+            actions: actions::registry(&config),
             config,
-            actions: actions::registry(),
             selected: 0,
             screen: Screen::Menu,
             status: None,
@@ -82,6 +82,19 @@ impl App {
                 });
             }
         }
+    }
+
+    /// Return to the main menu, rebuilding it so extensions toggled since
+    /// (in dbx or in the file) appear or disappear. The cursor stays on the
+    /// same action if it's still there.
+    fn show_menu(&mut self) {
+        self.screen = Screen::Menu;
+        self.reload_config();
+        let current = self.actions.get(self.selected).map(|a| a.title().to_string());
+        self.actions = actions::registry(&self.config);
+        self.selected = current
+            .and_then(|title| self.actions.iter().position(|a| a.title() == title))
+            .unwrap_or(0);
     }
 
     fn handle_event(&mut self, event: Event) {
@@ -175,7 +188,7 @@ impl App {
     /// Esc: run the screen's `on_back` if it has one, otherwise return to the menu.
     fn go_back(&mut self, on_back: Option<OnBack>) {
         let Some(mut on_back) = on_back else {
-            self.screen = Screen::Menu;
+            self.show_menu();
             return;
         };
         self.reload_config();
@@ -211,7 +224,7 @@ impl App {
     fn apply(&mut self, result: Result<Step>) {
         match result {
             Ok(Step::Done(text)) => {
-                self.screen = Screen::Menu;
+                self.show_menu();
                 self.status = Some(Status { text, is_error: false });
             }
             Ok(Step::Quit(message)) => {
@@ -255,6 +268,7 @@ fn suspend_and_run(terminal: &mut DefaultTerminal, command: &mut Command) -> Res
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::fs;
 
     #[test]
     fn esc_runs_back_handler_else_returns_to_menu() {
@@ -271,6 +285,28 @@ mod tests {
 
         press(&mut app, KeyCode::Esc); // no back handler
         assert!(matches!(app.screen, Screen::Menu));
+    }
+
+    #[test]
+    fn returning_to_menu_picks_up_toggled_extensions() {
+        let dir = std::env::temp_dir().join(format!("dbx-app-ext-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&dir);
+        let path = dir.join("config.toml");
+        let mut app = App::new(Config::load_from(&path).unwrap());
+        app.selected = 2; // Config
+        assert_eq!(app.actions.len(), 4);
+
+        // Disable an extension while a sub-screen is open, then Esc back.
+        app.apply(Ok(Step::pick("Sub", vec!["x".into()], |_, _| Ok(Step::Quit(None)))));
+        let disabled: toml_edit::Array = ["new-project"].into_iter().collect();
+        crate::config::set(&path, "extensions.disabled", disabled).unwrap();
+        press(&mut app, KeyCode::Esc);
+
+        let titles: Vec<_> = app.actions.iter().map(|a| a.title()).collect();
+        assert_eq!(titles, ["Recent projects", "Config", "Quit"]);
+        assert_eq!(app.actions[app.selected].title(), "Config");
+
+        fs::remove_dir_all(&dir).unwrap();
     }
 
     #[test]

@@ -4,7 +4,7 @@ use std::time::SystemTime;
 
 use anyhow::{Context, Result};
 
-use super::{Action, Ctx, Step, open_project};
+use crate::actions::{Action, Ctx, Step, open_project};
 
 pub struct RecentProjects;
 

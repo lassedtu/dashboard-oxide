@@ -1,6 +1,7 @@
 mod actions;
 mod app;
 mod config;
+mod extensions;
 mod sys;
 mod ui;
 
