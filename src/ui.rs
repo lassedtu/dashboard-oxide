@@ -25,8 +25,12 @@ pub fn draw(frame: &mut Frame, app: &App) {
         })
         .collect();
 
+    let footer = Line::from(format!(" {} ", app.config.projects_dir.display()))
+        .dark_gray()
+        .right_aligned();
+
     let list = List::new(items)
-        .block(Block::bordered().title(" dbx "))
+        .block(Block::bordered().title(" dbx ").title_bottom(footer))
         .highlight_style(Style::new().add_modifier(Modifier::REVERSED));
 
     let mut state = ListState::default().with_selected(Some(app.selected));

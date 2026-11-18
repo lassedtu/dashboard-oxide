@@ -2,6 +2,8 @@ use anyhow::Result;
 use ratatui::DefaultTerminal;
 use ratatui::crossterm::event::{self, Event, KeyCode, KeyEventKind};
 
+use crate::config::Config;
+
 /// A menu entry. Static for now; replaced by the Action registry in step 3.
 pub struct MenuItem {
     pub key: char,
@@ -9,14 +11,16 @@ pub struct MenuItem {
 }
 
 pub struct App {
+    pub config: Config,
     pub menu: Vec<MenuItem>,
     pub selected: usize,
     should_quit: bool,
 }
 
 impl App {
-    pub fn new() -> Self {
+    pub fn new(config: Config) -> Self {
         Self {
+            config,
             menu: vec![
                 MenuItem { key: 'n', title: "New project" },
                 MenuItem { key: 'r', title: "Recent projects" },
