@@ -9,6 +9,7 @@ mod quit;
 
 use std::path::Path;
 use std::process::Command;
+use std::rc::Rc;
 
 use anyhow::Result;
 
@@ -62,6 +63,18 @@ impl Step {
     ) -> Step {
         Pick::new(title, items, on_select).into()
     }
+
+    /// Give a `Prompt` or `Pick` an Esc handler if it doesn't have one yet.
+    pub fn or_back(mut self, on_back: impl FnMut(&Ctx) -> Result<Step> + 'static) -> Step {
+        match &mut self {
+            Step::Prompt(prompt) if prompt.on_back.is_none() => {
+                prompt.on_back = Some(Box::new(on_back));
+            }
+            Step::Pick(pick) if pick.on_back.is_none() => pick.on_back = Some(Box::new(on_back)),
+            _ => {}
+        }
+        self
+    }
 }
 
 /// A text prompt. Esc runs `on_back` if set, otherwise returns to the main menu.
@@ -102,6 +115,8 @@ impl Prompt {
 pub struct Pick {
     pub title: String,
     pub items: Vec<String>,
+    /// Optional shortcut key per item, shown before it; pressing one selects it.
+    pub shortcuts: Vec<char>,
     pub selected: usize,
     pub on_select: OnSelect,
     pub on_back: Option<OnBack>,
@@ -116,10 +131,17 @@ impl Pick {
         Self {
             title: title.into(),
             items,
+            shortcuts: Vec::new(),
             selected: 0,
             on_select: Box::new(on_select),
             on_back: None,
         }
+    }
+
+    /// Shortcut keys, one per item.
+    pub fn shortcuts(mut self, keys: Vec<char>) -> Self {
+        self.shortcuts = keys;
+        self
     }
 
     /// Start with this row highlighted.
@@ -156,16 +178,56 @@ pub trait Action {
     fn run(&self, ctx: &Ctx) -> Result<Step>;
 }
 
-/// The main menu: actions from enabled extensions, then the core actions.
+/// The main menu: enabled extensions, then the core actions. An extension
+/// with one action shows that action; with several, a submenu.
 pub fn registry(config: &Config) -> Vec<Box<dyn Action>> {
-    let mut actions: Vec<Box<dyn Action>> = extensions::all()
-        .into_iter()
-        .filter(|ext| ext.is_enabled(config))
-        .flat_map(|ext| ext.actions)
-        .collect();
+    let mut actions: Vec<Box<dyn Action>> = Vec::new();
+    for ext in extensions::all().into_iter().filter(|ext| ext.is_enabled(config)) {
+        if ext.actions.len() == 1 {
+            actions.extend(ext.actions);
+        } else if !ext.actions.is_empty() {
+            let actions_in_group = Rc::new(ext.actions);
+            actions.push(Box::new(Group { key: ext.key, title: ext.name, actions: actions_in_group }));
+        }
+    }
     actions.push(Box::new(config_menu::ConfigMenu));
     actions.push(Box::new(quit::Quit));
     actions
+}
+
+/// Main-menu entry for an extension with several actions.
+struct Group {
+    key: char,
+    title: String,
+    actions: Rc<Vec<Box<dyn Action>>>,
+}
+
+impl Action for Group {
+    fn key(&self) -> char {
+        self.key
+    }
+
+    fn title(&self) -> &str {
+        &self.title
+    }
+
+    fn run(&self, _ctx: &Ctx) -> Result<Step> {
+        Ok(submenu(self.title.clone(), self.actions.clone(), 0))
+    }
+}
+
+fn submenu(title: String, actions: Rc<Vec<Box<dyn Action>>>, selected: usize) -> Step {
+    let items = actions.iter().map(|a| a.title().to_string()).collect();
+    let keys = actions.iter().map(|a| a.key()).collect();
+    Pick::new(title.clone(), items, move |i, ctx| {
+        let step = actions[i].run(ctx)?;
+        // Esc from the action's first screen comes back here, not to the main menu.
+        let (title, actions) = (title.clone(), actions.clone());
+        Ok(step.or_back(move |_| Ok(submenu(title.clone(), actions.clone(), i))))
+    })
+    .shortcuts(keys)
+    .selected(selected)
+    .into()
 }
 
 /// Open `path` in the configured editor, then continue with `then`.
@@ -197,14 +259,28 @@ mod tests {
     use super::*;
 
     #[test]
-    fn registry_leaves_out_disabled_extensions() {
+    fn registry_groups_and_leaves_out_disabled_extensions() {
         let titles = |config: &Config| -> Vec<String> {
             registry(config).iter().map(|a| a.title().to_string()).collect()
         };
         let mut config = Config::default();
-        assert_eq!(titles(&config), ["New project", "Recent projects", "Config", "Quit"]);
+        assert_eq!(titles(&config), ["Coding projects", "Config", "Quit"]);
 
-        config.extensions.disabled = vec!["recent-projects".into(), "not-installed".into()];
-        assert_eq!(titles(&config), ["New project", "Config", "Quit"]);
+        config.raw = toml::from_str("[extensions.coding-projects]\nenabled = false").unwrap();
+        assert_eq!(titles(&config), ["Config", "Quit"]);
+    }
+
+    #[test]
+    fn submenu_actions_return_to_submenu_on_esc() {
+        let config = Config::default();
+        let ctx = Ctx { config: &config };
+        let group = registry(&config).into_iter().next().unwrap();
+        let Step::Pick(mut pick) = group.run(&ctx).unwrap() else { panic!("expected submenu") };
+        assert_eq!(pick.shortcuts, ['n', 'r']);
+
+        // New project opens a prompt; its Esc goes back to the submenu, same row.
+        let Step::Prompt(mut prompt) = (pick.on_select)(0, &ctx).unwrap() else { panic!() };
+        let back = prompt.on_back.as_mut().expect("back handler")(&ctx).unwrap();
+        assert!(matches!(back, Step::Pick(p) if p.title == "Coding projects" && p.selected == 0));
     }
 }

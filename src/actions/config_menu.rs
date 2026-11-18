@@ -1,17 +1,22 @@
-//! The Config screen: every setting with its current value. Selecting one
-//! edits it in place (toggles flip immediately, others open a prompt or
-//! picker), then returns here with the same row highlighted.
+//! The Config screen:
 //!
-//! To expose a new setting: add a variant to `Setting`, list it in `SETTINGS`,
-//! and fill in the `match`es.
+//! ```text
+//! Config                     core settings, Extensions, open config.toml
+//!   └ Extensions             every extension, on or off
+//!       └ <extension>        Enabled + that extension's settings
+//! ```
+//!
+//! Every page is a list of `Setting`s (see config.rs), so there is no
+//! per-setting code here: the setting's `Kind` decides how it's shown and
+//! edited. After an edit, the page reopens with the same row highlighted.
 
-use std::path::Path;
+use std::rc::Rc;
 
 use anyhow::{Result, bail};
 
 use super::{Action, Ctx, Pick, Prompt, Step, open_in_editor};
-use crate::config::{self, Config};
-use crate::{extensions, sys};
+use crate::config::{self, Config, Kind, Setting};
+use crate::extensions;
 
 pub struct ConfigMenu;
 
@@ -29,134 +34,125 @@ impl Action for ConfigMenu {
     }
 }
 
-#[derive(Clone, Copy)]
-enum Setting {
-    ProjectsDir,
-    Editor,
-    RecentCount,
-    CloseOnOpen,
-    GitInit,
-    CreateReadme,
-    Extensions,
-}
-
-const SETTINGS: [Setting; 7] = [
-    Setting::ProjectsDir,
-    Setting::Editor,
-    Setting::RecentCount,
-    Setting::CloseOnOpen,
-    Setting::GitInit,
-    Setting::CreateReadme,
-    Setting::Extensions,
-];
-
 const LABEL_WIDTH: usize = 23;
 const VALUE_WIDTH: usize = 24;
 
-impl Setting {
-    fn label(self) -> &'static str {
-        match self {
-            Setting::ProjectsDir => "Projects folder",
-            Setting::Editor => "Editor",
-            Setting::RecentCount => "Recent projects shown",
-            Setting::CloseOnOpen => "Quit after opening",
-            Setting::GitInit => "git init new projects",
-            Setting::CreateReadme => "README in new projects",
-            Setting::Extensions => "Extensions",
-        }
+/// Rebuilds the page an edit started from, with the given config.
+type Reopen = Rc<dyn Fn(&Config) -> Step>;
+
+/// A setting together with the full dotted key it's stored under.
+#[derive(Clone)]
+struct Entry {
+    key: String,
+    setting: Setting,
+}
+
+impl Entry {
+    fn value(&self, config: &Config) -> toml::Value {
+        config.get(&self.key).cloned().unwrap_or_else(|| self.setting.default.clone())
     }
 
-    /// Key in config.toml (dotted for tables).
-    fn key(self) -> &'static str {
-        match self {
-            Setting::ProjectsDir => "projects_dir",
-            Setting::Editor => "editor",
-            Setting::RecentCount => "recent_count",
-            Setting::CloseOnOpen => "close_on_open",
-            Setting::GitInit => "new_project.git_init",
-            Setting::CreateReadme => "new_project.create_readme",
-            Setting::Extensions => "extensions.disabled",
-        }
-    }
-
-    fn display(self, c: &Config) -> String {
-        let on_off = |b: bool| if b { "on" } else { "off" }.to_string();
-        match self {
-            Setting::ProjectsDir => config::tilde(&c.projects_dir),
-            Setting::Editor => c.editor.clone(),
-            Setting::RecentCount => c.recent_count.to_string(),
-            Setting::CloseOnOpen => on_off(c.close_on_open),
-            Setting::GitInit => on_off(c.new_project.git_init),
-            Setting::CreateReadme => on_off(c.new_project.create_readme),
-            Setting::Extensions => {
-                let all = extensions::all();
-                let on = all.iter().filter(|e| e.is_enabled(c)).count();
-                format!("{on} of {} on", all.len())
-            }
-        }
-    }
-
-    /// What happens when the row is selected. `row` is where to return to.
-    fn edit(self, ctx: &Ctx, row: usize) -> Result<Step> {
-        let c = ctx.config;
-        let toggle = |current: bool| -> Result<Step> {
-            let updated = save(ctx, self.key(), !current)?;
-            Ok(menu(&updated, row))
-        };
-
-        match self {
-            Setting::CloseOnOpen => toggle(c.close_on_open),
-            Setting::GitInit => toggle(c.new_project.git_init),
-            Setting::CreateReadme => toggle(c.new_project.create_readme),
-            Setting::Editor => Ok(editor_picker(c, row)),
-            Setting::Extensions => Ok(extensions_picker(c, row, 0)),
-
-            Setting::ProjectsDir => Ok(Prompt::new("Projects folder", move |text, ctx| {
-                let text = text.trim();
-                if text.is_empty() {
-                    bail!("folder can't be empty");
-                }
-                let path = config::expand_tilde(Path::new(text))?;
-                if !path.is_dir() {
-                    bail!("{} is not an existing folder", path.display());
-                }
-                Ok(menu(&save(ctx, self.key(), text)?, row))
-            })
-            .initial(config::tilde(&c.projects_dir))
-            .back(move |ctx| Ok(menu(ctx.config, row)))
-            .into()),
-
-            Setting::RecentCount => Ok(Prompt::new("Recent projects shown", move |text, ctx| {
-                let count: i64 = match text.trim().parse() {
-                    Ok(n) if n >= 1 => n,
-                    _ => bail!("enter a whole number, 1 or more"),
-                };
-                Ok(menu(&save(ctx, self.key(), count)?, row))
-            })
-            .initial(c.recent_count.to_string())
-            .back(move |ctx| Ok(menu(ctx.config, row)))
-            .into()),
-        }
+    fn row(&self, config: &Config) -> String {
+        let value = self.setting.display(&self.value(config));
+        row(&self.setting.label, &value)
     }
 }
 
-/// The settings list, with `row` highlighted.
-fn menu(config: &Config, row: usize) -> Step {
-    let mut items: Vec<String> = SETTINGS
-        .iter()
-        .map(|s| format!("{:<LABEL_WIDTH$}{}", s.label(), fit(&s.display(config), VALUE_WIDTH)))
+fn row(label: &str, value: &str) -> String {
+    format!("{label:<LABEL_WIDTH$}{}", fit(value, VALUE_WIDTH))
+}
+
+/// The top-level Config page.
+fn menu(config: &Config, selected: usize) -> Step {
+    let entries: Vec<Entry> = config::core_settings()
+        .into_iter()
+        .map(|setting| Entry { key: setting.key.clone(), setting })
         .collect();
+
+    let all = extensions::all();
+    let on = all.iter().filter(|e| e.is_enabled(config)).count();
+    let mut items: Vec<String> = entries.iter().map(|e| e.row(config)).collect();
+    items.push(row("Extensions", &format!("{on} of {} on", all.len())));
     items.push("Open config.toml in editor".into());
 
-    Pick::new("Config", items, |i, ctx| match SETTINGS.get(i) {
-        Some(setting) => setting.edit(ctx, i),
-        None => {
-            let message = format!("opened {}", config::tilde(&ctx.config.path));
-            open_in_editor(ctx, &ctx.config.path, Step::Done(message))
+    Pick::new("Config", items, move |i, ctx| {
+        if let Some(entry) = entries.get(i) {
+            return edit(entry.clone(), ctx, Rc::new(move |c| menu(c, i)));
         }
+        if i == entries.len() {
+            return Ok(extensions_list(ctx.config, i, 0));
+        }
+        let message = format!("opened {}", config::tilde(&ctx.config.path));
+        open_in_editor(ctx, &ctx.config.path, Step::Done(message))
     })
-    .selected(row)
+    .selected(selected)
     .into()
+}
+
+/// Every extension and whether it's on. `menu_row` is where Esc returns to.
+fn extensions_list(config: &Config, menu_row: usize, selected: usize) -> Step {
+    let all = extensions::all();
+    let items = all
+        .iter()
+        .map(|e| {
+            let state = if e.is_enabled(config) { "on" } else { "off" };
+            format!("{state:<5}{:<18}{}", e.name, fit(&e.description, VALUE_WIDTH))
+        })
+        .collect();
+    let ids: Vec<String> = all.into_iter().map(|e| e.id).collect();
+
+    Pick::new("Extensions", items, move |i, ctx| {
+        Ok(extension_page(ctx.config, &ids[i], menu_row, i, 0))
+    })
+    .selected(selected)
+    .back(move |ctx| Ok(menu(ctx.config, menu_row)))
+    .into()
+}
+
+/// One extension: its on/off switch followed by its settings.
+fn extension_page(config: &Config, id: &str, menu_row: usize, list_row: usize, selected: usize) -> Step {
+    let Some(ext) = extensions::all().into_iter().find(|e| e.id == id) else {
+        return extensions_list(config, menu_row, list_row);
+    };
+    let entries: Vec<Entry> = std::iter::once(ext.enabled_setting())
+        .chain(ext.settings.iter().cloned())
+        .map(|setting| Entry { key: ext.key_for(&setting.key), setting })
+        .collect();
+    let items = entries.iter().map(|e| e.row(config)).collect();
+
+    let id = id.to_string();
+    Pick::new(ext.name, items, move |i, ctx| {
+        let id = id.clone();
+        let reopen = Rc::new(move |c: &Config| extension_page(c, &id, menu_row, list_row, i));
+        edit(entries[i].clone(), ctx, reopen)
+    })
+    .selected(selected)
+    .back(move |ctx| Ok(extensions_list(ctx.config, menu_row, list_row)))
+    .into()
+}
+
+/// What selecting a setting does: toggles flip in place, editors get a
+/// picker, everything else a pre-filled prompt. Ends by reopening the page.
+fn edit(entry: Entry, ctx: &Ctx, reopen: Reopen) -> Result<Step> {
+    let current = entry.value(ctx.config);
+    match entry.setting.kind {
+        Kind::Toggle => {
+            let updated = save(ctx, &entry.key, !current.as_bool().unwrap_or(false))?;
+            Ok(reopen(&updated))
+        }
+        Kind::Editor => Ok(editor_picker(ctx.config, entry, reopen)),
+        Kind::Text | Kind::Folder | Kind::Count => {
+            let initial = entry.setting.display(&current);
+            let back = reopen.clone();
+            Ok(Prompt::new(entry.setting.label.clone(), move |text, ctx| {
+                let value = entry.setting.parse(&text)?;
+                Ok(reopen(&save(ctx, &entry.key, value)?))
+            })
+            .initial(initial)
+            .back(move |ctx| Ok(back(ctx.config)))
+            .into())
+        }
+    }
 }
 
 /// Shown in the picker as (label, command). Anything else goes through "Custom…".
@@ -170,8 +166,9 @@ const EDITOR_PRESETS: &[(&str, &str)] = &[
     ("Helix", "hx"),
 ];
 
-fn editor_picker(config: &Config, row: usize) -> Step {
-    let current = config.editor.as_str();
+fn editor_picker(config: &Config, entry: Entry, reopen: Reopen) -> Step {
+    let current = entry.value(config);
+    let current = current.as_str().unwrap_or_default();
     let mut items: Vec<String> = EDITOR_PRESETS
         .iter()
         .map(|(label, cmd)| {
@@ -185,64 +182,37 @@ fn editor_picker(config: &Config, row: usize) -> Step {
         .position(|(_, cmd)| *cmd == current)
         .unwrap_or(EDITOR_PRESETS.len());
 
-    Pick::new("Editor", items, move |i, ctx| match EDITOR_PRESETS.get(i) {
-        Some((_, cmd)) => save_editor(ctx, cmd, row),
-        None => Ok(Prompt::new("Editor command, e.g. code -n", move |cmd, ctx| {
-            save_editor(ctx, &cmd, row)
-        })
-        .initial(ctx.config.editor.clone())
-        .back(move |ctx| Ok(editor_picker(ctx.config, row)))
-        .into()),
-    })
-    .selected(selected)
-    .back(move |ctx| Ok(menu(ctx.config, row)))
-    .into()
-}
-
-/// Every extension with its on/off state. Enter toggles the highlighted one
-/// and stays on this screen.
-fn extensions_picker(config: &Config, row: usize, selected: usize) -> Step {
-    let all = extensions::all();
-    let items = all
-        .iter()
-        .map(|e| {
-            let state = if e.is_enabled(config) { "on" } else { "off" };
-            format!("{state:<5}{:<18}{}", e.name, fit(&e.description, VALUE_WIDTH))
-        })
-        .collect();
-    let ids: Vec<String> = all.into_iter().map(|e| e.id).collect();
-
-    Pick::new("Extensions", items, move |i, ctx| {
-        let id = &ids[i];
-        let mut disabled = ctx.config.extensions.disabled.clone();
-        match disabled.iter().position(|d| d == id) {
-            Some(pos) => {
-                disabled.remove(pos);
+    let back = reopen.clone();
+    Pick::new(entry.setting.label.clone(), items, move |i, ctx| {
+        let (entry, reopen) = (entry.clone(), reopen.clone());
+        match EDITOR_PRESETS.get(i) {
+            Some((_, cmd)) => save_editor(ctx, &entry, cmd, &reopen),
+            None => {
+                let again = (entry.clone(), reopen.clone());
+                let initial = entry.setting.display(&entry.value(ctx.config));
+                Ok(Prompt::new("Editor command, e.g. code -n", move |cmd, ctx| {
+                    save_editor(ctx, &entry, &cmd, &reopen)
+                })
+                .initial(initial)
+                .back(move |ctx| Ok(editor_picker(ctx.config, again.0.clone(), again.1.clone())))
+                .into())
             }
-            None => disabled.push(id.clone()),
         }
-        let disabled: toml_edit::Array = disabled.iter().map(String::as_str).collect();
-        let updated = save(ctx, Setting::Extensions.key(), disabled)?;
-        Ok(extensions_picker(&updated, row, i))
     })
     .selected(selected)
-    .back(move |ctx| Ok(menu(ctx.config, row)))
+    .back(move |ctx| Ok(back(ctx.config)))
     .into()
 }
 
-fn save_editor(ctx: &Ctx, editor: &str, row: usize) -> Result<Step> {
-    let editor = editor.trim();
-    let Some(program) = editor.split_whitespace().next() else {
-        bail!("editor can't be empty");
-    };
-    // Refuse to save an editor we can't launch; the user stays put and can choose again.
-    if sys::find_on_path(program).is_none() {
-        bail!("`{program}` not found on PATH");
+fn save_editor(ctx: &Ctx, entry: &Entry, editor: &str, reopen: &Reopen) -> Result<Step> {
+    if entry.setting.kind != Kind::Editor {
+        bail!("{} is not an editor setting", entry.setting.label);
     }
-    Ok(menu(&save(ctx, "editor", editor)?, row))
+    let value = entry.setting.parse(editor)?;
+    Ok(reopen(&save(ctx, &entry.key, value)?))
 }
 
-/// Write one key and return the config as it now is on disk, so the menu
+/// Write one key and return the config as it now is on disk, so the page
 /// we return to shows the new value.
 fn save(ctx: &Ctx, key: &str, value: impl Into<toml_edit::Value>) -> Result<Config> {
     config::set(&ctx.config.path, key, value)?;
@@ -262,81 +232,77 @@ fn fit(value: &str, width: usize) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::config::tests::temp_config;
+    use crate::extensions::coding_projects;
     use std::fs;
 
-    fn temp_config(name: &str) -> (std::path::PathBuf, Config) {
-        let dir = std::env::temp_dir().join(format!("dbx-menu-{name}-{}", std::process::id()));
-        let _ = fs::remove_dir_all(&dir);
-        let config = Config::load_from(&dir.join("config.toml")).unwrap();
-        (dir, config)
-    }
-
-    fn pick_selected(step: Step) -> usize {
+    fn pick(step: Step) -> crate::actions::Pick {
         match step {
-            Step::Pick(pick) => pick.selected,
-            _ => panic!("expected the config menu"),
+            Step::Pick(pick) => pick,
+            _ => panic!("expected a list"),
         }
     }
 
+    fn select(step: Step, row: usize, config: &Config) -> Result<Step> {
+        (pick(step).on_select)(row, &Ctx { config })
+    }
+
     #[test]
-    fn toggles_flip_each_time_and_return_to_same_row() {
-        let (dir, config) = temp_config("toggle");
+    fn core_toggle_flips_each_time_and_returns_to_same_row() {
+        let (dir, config) = temp_config("menu-toggle");
         assert!(config.close_on_open);
 
-        let step = Setting::CloseOnOpen.edit(&Ctx { config: &config }, 3).unwrap();
-        assert_eq!(pick_selected(step), 3);
+        let step = select(menu(&config, 0), 1, &config).unwrap();
+        assert_eq!(pick(step).selected, 1);
         let config = config.reload().unwrap();
         assert!(!config.close_on_open);
 
-        Setting::CloseOnOpen.edit(&Ctx { config: &config }, 3).unwrap();
+        select(menu(&config, 0), 1, &config).unwrap();
         assert!(config.reload().unwrap().close_on_open);
 
         fs::remove_dir_all(&dir).unwrap();
     }
 
     #[test]
-    fn rejects_invalid_values_without_saving() {
-        let (dir, config) = temp_config("invalid");
-        let ctx = Ctx { config: &config };
+    fn extension_page_edits_its_own_table() {
+        let (dir, config) = temp_config("menu-ext");
+        let page = |c: &Config, row| extension_page(c, coding_projects::ID, 2, 0, row);
+        assert!(pick(page(&config, 0)).items[1].contains("~/Developer/Projekter"));
 
-        assert!(save_editor(&ctx, "definitely-not-an-editor", 1).is_err());
-        let Ok(Step::Prompt(mut prompt)) = Setting::RecentCount.edit(&ctx, 2) else {
+        // Row 0 is Enabled.
+        let step = select(page(&config, 0), 0, &config).unwrap();
+        assert!(pick(step).items[0].ends_with("off"));
+        let config = config.reload().unwrap();
+        assert_eq!(config.get("extensions.coding-projects.enabled"), Some(&false.into()));
+
+        // Row 2 is the recent count: invalid input is refused, valid input saved.
+        let Step::Prompt(mut prompt) = select(page(&config, 0), 2, &config).unwrap() else {
             panic!("expected a prompt");
         };
         assert_eq!(prompt.initial, "10");
+        let ctx = Ctx { config: &config };
         assert!((prompt.on_submit)("0".into(), &ctx).is_err());
-        assert!((prompt.on_submit)("abc".into(), &ctx).is_err());
+        let count = |c: &Config| c.reload().unwrap().get("extensions.coding-projects.recent_count").cloned();
+        assert_eq!(count(&config), Some(10.into()));
+        let step = (prompt.on_submit)(" 25 ".into(), &ctx).unwrap();
+        assert_eq!(pick(step).selected, 2);
+        assert_eq!(count(&config), Some(25.into()));
 
-        let reloaded = config.reload().unwrap();
-        assert_eq!(reloaded.editor, "code");
-        assert_eq!(reloaded.recent_count, 10);
-
-        assert!((prompt.on_submit)(" 25 ".into(), &ctx).is_ok());
-        assert_eq!(config.reload().unwrap().recent_count, 25);
+        // Esc goes back to the Extensions list.
+        let back = (pick(page(&config, 0)).on_back.unwrap())(&ctx).unwrap();
+        assert_eq!(pick(back).title, "Extensions");
 
         fs::remove_dir_all(&dir).unwrap();
     }
 
     #[test]
-    fn extensions_toggle_and_keep_unknown_ids() {
-        let (dir, config) = temp_config("extensions");
-        // An id from an extension that's no longer installed.
-        config::set(&config.path, "extensions.disabled", toml_edit::Array::from_iter(["gone"]))
-            .unwrap();
-        let config = config.reload().unwrap();
-
-        let Step::Pick(mut pick) = extensions_picker(&config, 6, 0) else { panic!() };
-        assert!(pick.items[1].starts_with("on   Recent projects"));
-        let Step::Pick(pick) = (pick.on_select)(1, &Ctx { config: &config }).unwrap() else {
-            panic!()
-        };
-        assert_eq!(pick.selected, 1);
-        assert!(pick.items[1].starts_with("off  Recent projects"));
-
-        let config = config.reload().unwrap();
-        assert_eq!(config.extensions.disabled, ["gone", "recent-projects"]);
-        assert_eq!(Setting::Extensions.display(&config), "1 of 2 on");
-
+    fn editor_must_exist() {
+        let (dir, config) = temp_config("menu-editor");
+        let entry = Entry { key: "editor".into(), setting: config::core_settings().remove(0) };
+        let reopen: Reopen = Rc::new(|c| menu(c, 0));
+        let ctx = Ctx { config: &config };
+        assert!(save_editor(&ctx, &entry, "definitely-not-an-editor", &reopen).is_err());
+        assert_eq!(config.reload().unwrap().editor, "code");
         fs::remove_dir_all(&dir).unwrap();
     }
 

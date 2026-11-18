@@ -7,6 +7,7 @@ use ratatui::style::{Color, Modifier, Style, Stylize};
 use ratatui::text::{Line, Span, Text};
 use ratatui::widgets::{Block, List, ListItem, ListState, Paragraph, Wrap};
 
+use crate::actions::Pick;
 use crate::app::{App, Screen, Status};
 
 const WIDTH: u16 = 50;
@@ -72,7 +73,7 @@ pub fn draw(frame: &mut Frame, app: &App) {
     match &app.screen {
         Screen::Menu => draw_menu(frame, app, body),
         Screen::Prompt { prompt, input } => draw_prompt(frame, &prompt.label, input, body),
-        Screen::Pick(pick) => draw_pick(frame, &pick.title, &pick.items, pick.selected, body),
+        Screen::Pick(pick) => draw_pick(frame, pick, body),
     }
 
     if let Some(status) = &app.status {
@@ -105,7 +106,7 @@ fn draw_menu(frame: &mut Frame, app: &App, area: Rect) {
         })
         .collect();
 
-    let footer = Line::from(format!(" {} ", crate::config::tilde(&app.config.projects_dir)))
+    let footer = Line::from(concat!(" v", env!("CARGO_PKG_VERSION"), " "))
         .dark_gray()
         .right_aligned();
 
@@ -130,24 +131,32 @@ fn draw_prompt(frame: &mut Frame, label: &str, input: &str, area: Rect) {
     frame.set_cursor_position(Position::new(cursor_x.min(area.right() - 2), area.y + 1));
 }
 
-fn draw_pick(frame: &mut Frame, title: &str, items: &[String], selected: usize, area: Rect) {
+fn draw_pick(frame: &mut Frame, pick: &Pick, area: Rect) {
     let hint = Line::from(" enter: select · esc: back ")
         .dark_gray()
         .right_aligned();
     let block = Block::bordered()
-        .title(format!(" {title} "))
+        .title(format!(" {} ", pick.title))
         .title_bottom(hint);
 
-    if items.is_empty() {
+    if pick.items.is_empty() {
         let empty = Paragraph::new(" nothing here").dark_gray().block(block);
         frame.render_widget(empty, area);
         return;
     }
 
-    let list = List::new(items.iter().map(|s| ListItem::new(format!(" {s}"))))
+    let rows = pick.items.iter().enumerate().map(|(i, item)| match pick.shortcuts.get(i) {
+        // Same look as the main menu.
+        Some(key) => ListItem::new(Line::from(vec![
+            Span::from(format!(" {key} ")).bold().cyan(),
+            Span::from(item.as_str()),
+        ])),
+        None => ListItem::new(format!(" {item}")),
+    });
+    let list = List::new(rows)
         .block(block)
         .highlight_style(Style::new().add_modifier(Modifier::REVERSED));
-    let mut state = ListState::default().with_selected(Some(selected));
+    let mut state = ListState::default().with_selected(Some(pick.selected));
     frame.render_stateful_widget(list, area, &mut state);
 }
 
@@ -183,6 +192,6 @@ mod tests {
             })
             .collect();
         println!("{}", rows.join("\n"));
-        assert!(rows.iter().any(|r| r.contains("New project")));
+        assert!(rows.iter().any(|r| r.contains("Coding projects")));
     }
 }

@@ -4,6 +4,7 @@ use std::time::SystemTime;
 
 use anyhow::{Context, Result};
 
+use super::settings;
 use crate::actions::{Action, Ctx, Step, open_project};
 
 pub struct RecentProjects;
@@ -18,8 +19,9 @@ impl Action for RecentProjects {
     }
 
     fn run(&self, ctx: &Ctx) -> Result<Step> {
-        let dir = &ctx.config.projects_dir;
-        let projects = list_recent(dir, ctx.config.recent_count)?;
+        let settings = settings(ctx.config)?;
+        let dir = &settings.projects_dir;
+        let projects = list_recent(dir, settings.recent_count)?;
         if projects.is_empty() {
             return Ok(Step::Done(format!("no projects in {}", dir.display())));
         }
@@ -57,7 +59,7 @@ fn list_recent(dir: &Path, limit: usize) -> Result<Vec<Project>> {
         })
         .collect();
 
-    projects.sort_by(|a, b| b.last_activity.cmp(&a.last_activity));
+    projects.sort_by_key(|p| std::cmp::Reverse(p.last_activity));
     projects.truncate(limit);
     Ok(projects)
 }

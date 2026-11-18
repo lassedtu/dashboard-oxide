@@ -2,12 +2,14 @@
 
 **dashboard-oxide**: a small terminal dashboard for things I do often.
 
-- **New project**: name it, and dbx creates the folder in your projects directory, adds a README, runs `git init`, and opens it in your editor.
-- **Recent projects**: lists your most recently active projects and opens the one you pick.
+- **Coding projects**
+  - **New project**: name it, and dbx creates the folder in your projects directory, adds a README, runs `git init`, and opens it in your editor.
+  - **Recent projects**: lists your most recently active projects and opens the one you pick.
 - **Config**: view and change every setting from inside dbx, or open `~/.dbx/config.toml` in your editor.
-- **Extensions**: New project and Recent projects are extensions you can switch off under Config → Extensions.
 
-Built with Rust and [ratatui](https://ratatui.rs). Designed so new features are a single file.
+Features come as **extensions** (Coding projects is one), each with its own settings, switched on and off under Config → Extensions.
+
+Built with Rust and [ratatui](https://ratatui.rs). Designed so new features are a single folder.
 
 ## Install
 
@@ -36,7 +38,7 @@ dbx --help
 
 | Key | Does |
 |---|---|
-| `n` / `r` / `c` / `q` | Run the action with that shortcut |
+| Highlighted letter (`p`, `c`, `q`, ...) | Run that entry; works in submenus too (`p` then `n` = new project) |
 | `↑` `↓` or `j` `k` | Move |
 | `Enter` | Select / submit |
 | `Esc` | Back one level (quits from the main menu) |
@@ -46,43 +48,47 @@ If an action fails (say, a project name that already exists), you stay on the sa
 
 ## Configuration
 
-Press `c` for the Config screen. It lists every setting with its current value:
+Press `c` for the Config screen:
 
-- **On/off settings** flip when you press Enter.
-- **Projects folder and recent count** open a prompt pre-filled with the current value. Invalid input (a folder that doesn't exist, a count of 0) is rejected and nothing is saved.
+```
+Config                     Editor, Quit after opening, Extensions, Open config.toml
+  └ Extensions             every extension, on or off
+      └ Coding projects    Enabled, Projects folder, Recent projects shown, ...
+```
+
+Every setting shows its current value. Pressing Enter on one:
+
+- **On/off settings** flip.
+- **Folders, numbers and text** open a prompt pre-filled with the current value. Invalid input (a folder that doesn't exist, a count of 0) is rejected and nothing is saved.
 - **Editor** offers VS Code, Cursor, Zed, Sublime, Neovim, Vim, and Helix, or "Custom…" for any command. Only editors found on your `PATH` are saved.
-- **Extensions** lists every extension; Enter switches the highlighted one on or off.
-- **Open config.toml in editor** opens the file itself.
 
-Changes are written straight to the file, touching only the line that changed, so your comments are kept.
+Changes are written straight to the file, touching only the line that changed, so your comments are kept. **Open config.toml in editor** opens the file itself.
 
 On first run dbx creates `~/.dbx/config.toml`:
 
 ```toml
-# Folder where new projects are created and recent projects are listed from.
-projects_dir = "~/Developer/Projekter"
-
-# Command used to open a project folder. May include arguments, e.g. "code -n".
+# Command used to open projects and files. May include arguments, e.g. "code -n".
 # Terminal editors (nvim, vim, hx, ...) take over the terminal while open.
 editor = "code"
 
-# How many projects to show under "Recent projects".
-recent_count = 10
-
-# Quit dbx after opening a project in the editor.
+# Quit dbx after opening something in the editor.
 close_on_open = true
 
-[new_project]
+# Each extension has its own table. Leave a key out to use its default.
+# Everything here can also be changed from Config -> Extensions inside dbx.
+
+[extensions.coding-projects]
+enabled = true
+# Folder where new projects are created and recent projects are listed from.
+projects_dir = "~/Developer/Projekter"
+# How many projects to show under "Recent projects".
+recent_count = 10
+# What to set up in new projects.
 git_init = true
 create_readme = true
-
-# Extensions to leave out of the menu, by id. Easiest to toggle from
-# Config -> Extensions inside dbx.
-[extensions]
-disabled = []
 ```
 
-Any key you leave out falls back to its default, so old config files keep working as new options are added. dbx re-reads the file every time you start an action, so edits take effect without restarting.
+Any key you leave out falls back to its default, so old config files keep working as new options are added. Values of the wrong type (say, `recent_count = "ten"`) are reported when dbx starts. Config files from before extensions, with `projects_dir` and `[new_project]` at the top, are moved into `[extensions.coding-projects]` automatically, comments included. dbx re-reads the file every time you start an action, so edits take effect without restarting.
 
 **Editors:** GUI editors (VS Code, Zed, ...) are launched in the background. Terminal editors (`nvim`, `vim`, `vi`, `nano`, `hx`, `micro`, `kak`, `emacs -nw`, ...) get the terminal: dbx steps aside while the editor runs and comes back when you quit it. When `close_on_open` is on, dbx exits and the editor opens in its place.
 
@@ -97,21 +103,24 @@ src/
   main.rs                CLI flags, terminal setup and teardown
   app.rs                 app state, screens, key handling
   ui.rs                  all drawing
-  config.rs              loading and creating ~/.dbx/config.toml
+  config.rs              loading, migrating and editing ~/.dbx/config.toml;
+                         the Setting type (key, label, kind, default)
   sys.rs                 shell-outs (editor detection, git, PATH lookup)
   actions/
     mod.rs               Action trait, Step enum, registry
-    config_menu.rs       the Config screen and its settings
+    config_menu.rs       the Config screen, built from Setting lists
     quit.rs
   extensions/
-    mod.rs               Extension struct, list of built-in extensions
-    new_project.rs
-    recent_projects.rs
+    mod.rs               Extension struct, list of all extensions
+    coding_projects/
+      mod.rs             the extension: settings, actions
+      new_project.rs
+      recent_projects.rs
 ```
 
-## Adding an action
+## Adding an extension
 
-Menu entries are actions, grouped into **extensions** that can be switched on and off. Config and Quit are core actions and always shown; everything else belongs to an extension.
+Menu entries are **actions**, grouped into **extensions**. An extension with one action puts it straight in the main menu; with several, it gets a submenu (like Coding projects). Config and Quit are core actions and always shown; everything else belongs to an extension.
 
 Actions never draw anything. They return a `Step`, and the app turns that into a screen:
 
@@ -137,13 +146,16 @@ Prompt::new("Name", on_submit)
 
 Pick::new("Choose", items, on_select)
     .selected(2)                       // start on this row
+    .shortcuts(vec!['a', 'b'])         // one key per item
     .back(|ctx| Ok(previous_screen))
     .into()
 ```
 
+Esc from the first screen of an action in a submenu returns to that submenu.
+
 `ctx.config` is re-read from disk before every action and callback, so it always matches the file.
 
-1. Create `src/extensions/my_action.rs`:
+1. Create `src/extensions/my_ext/my_action.rs`:
 
    ```rust
    use anyhow::Result;
@@ -164,30 +176,46 @@ Pick::new("Choose", items, on_select)
    }
    ```
 
-2. Add an extension for it in `src/extensions/mod.rs`:
+2. Describe the extension in `src/extensions/my_ext/mod.rs`:
 
    ```rust
    mod my_action;
 
-   fn builtin() -> Vec<Extension> {
-       vec![
-           // ...
-           Extension {
-               id: "my-action".into(),     // stored in config.toml; don't change it later
-               name: "My action".into(),
-               description: "Says hi".into(),
-               actions: vec![Box::new(my_action::MyAction)],
-           },
-       ]
+   use serde::Deserialize;
+
+   use super::Extension;
+   use crate::config::{Config, Kind, Setting};
+
+   pub fn extension() -> Extension {
+       Extension {
+           id: "my-ext".into(),        // its table in config.toml; don't change it later
+           name: "My extension".into(),
+           description: "Says hi".into(),
+           key: 'm',                   // submenu shortcut, if it has several actions
+           default_enabled: true,
+           settings: vec![
+               Setting::new("greeting", "Greeting", Kind::Text, "hi"),
+           ],
+           actions: vec![Box::new(my_action::MyAction)],
+       }
+   }
+
+   #[derive(Deserialize)]
+   struct Settings {
+       greeting: String,
+   }
+
+   /// Call from actions: the user's values, with defaults filled in.
+   fn settings(config: &Config) -> anyhow::Result<Settings> {
+       extension().load(config)
    }
    ```
 
-   It shows up in the menu, and under Config → Extensions, straight away.
+3. Add `pub mod my_ext;` and `my_ext::extension()` to `all()` in `src/extensions/mod.rs`.
 
-**Adding a setting:**
-1. Add a field to `Config` in `src/config.rs`.
-2. Add it to `Default` and to the `DEFAULT_CONFIG` template. A test fails if those two drift apart.
-3. To make it editable from the Config screen, add a variant to `Setting` in `src/actions/config_menu.rs`, list it in `SETTINGS`, and fill in the `match`es.
+It shows up in the menu, and under Config → Extensions with an editable page for its settings, straight away. Setting kinds are `Text`, `Folder`, `Count`, `Toggle` and `Editor`; the kind decides how the value is shown, validated and edited, so a setting needs no UI code. If you add the extension's table to the `DEFAULT_CONFIG` template, a test checks it matches the defaults.
+
+**Core settings** (not owned by an extension) are fields on `Config`, listed in `core_settings()` in `src/config.rs`.
 
 For running external commands, add a helper to `sys.rs` so output never lands on top of the TUI.
 

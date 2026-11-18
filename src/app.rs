@@ -181,6 +181,12 @@ impl App {
                 let on_back = pick.on_back.take();
                 self.go_back(on_back);
             }
+            KeyCode::Char(c) => {
+                if let Some(i) = pick.shortcuts.iter().position(|&k| k == c) {
+                    pick.selected = i;
+                    self.handle_pick_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+                }
+            }
             _ => {}
         }
     }
@@ -293,20 +299,32 @@ mod tests {
         let _ = fs::remove_dir_all(&dir);
         let path = dir.join("config.toml");
         let mut app = App::new(Config::load_from(&path).unwrap());
-        app.selected = 2; // Config
-        assert_eq!(app.actions.len(), 4);
+        app.selected = 1; // Config
+        assert_eq!(app.actions.len(), 3);
 
         // Disable an extension while a sub-screen is open, then Esc back.
         app.apply(Ok(Step::pick("Sub", vec!["x".into()], |_, _| Ok(Step::Quit(None)))));
-        let disabled: toml_edit::Array = ["new-project"].into_iter().collect();
-        crate::config::set(&path, "extensions.disabled", disabled).unwrap();
+        crate::config::set(&path, "extensions.coding-projects.enabled", false).unwrap();
         press(&mut app, KeyCode::Esc);
 
         let titles: Vec<_> = app.actions.iter().map(|a| a.title()).collect();
-        assert_eq!(titles, ["Recent projects", "Config", "Quit"]);
+        assert_eq!(titles, ["Config", "Quit"]);
         assert_eq!(app.actions[app.selected].title(), "Config");
 
         fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn pick_shortcut_selects_and_activates() {
+        let mut app = App::new(Config::default());
+        let pick = Pick::new("Sub", vec!["a".into(), "b".into()], |i, _| {
+            Ok(Step::Done(format!("chose {i}")))
+        })
+        .shortcuts(vec!['x', 'y']);
+        app.apply(Ok(pick.into()));
+        press(&mut app, KeyCode::Char('j')); // movement keys still move
+        press(&mut app, KeyCode::Char('x'));
+        assert!(app.status.as_ref().is_some_and(|s| s.text == "chose 0"));
     }
 
     #[test]

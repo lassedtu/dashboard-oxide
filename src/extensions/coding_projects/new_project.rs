@@ -2,6 +2,7 @@ use std::fs;
 
 use anyhow::{Context, Result, bail};
 
+use super::settings;
 use crate::actions::{Action, Ctx, Step, open_project};
 use crate::sys;
 
@@ -23,22 +24,22 @@ impl Action for NewProject {
 
 fn create(name: String, ctx: &Ctx) -> Result<Step> {
     let name = validate_name(&name)?;
-    let config = ctx.config;
+    let settings = settings(ctx.config)?;
+    let dir = &settings.projects_dir;
 
-    fs::create_dir_all(&config.projects_dir)
-        .with_context(|| format!("creating {}", config.projects_dir.display()))?;
+    fs::create_dir_all(dir).with_context(|| format!("creating {}", dir.display()))?;
 
-    let path = config.projects_dir.join(name);
+    let path = dir.join(name);
     // create_dir (not _all) fails if it already exists, so we never clobber a project.
     fs::create_dir(&path).map_err(|e| match e.kind() {
         std::io::ErrorKind::AlreadyExists => anyhow::anyhow!("{name} already exists"),
         _ => anyhow::Error::new(e).context(format!("creating {}", path.display())),
     })?;
 
-    if config.new_project.create_readme {
+    if settings.create_readme {
         fs::write(path.join("README.md"), format!("# {name}\n")).context("writing README.md")?;
     }
-    if config.new_project.git_init {
+    if settings.git_init {
         sys::git_init(&path)?;
     }
 
